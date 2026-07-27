@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  meetings  Meeting[]
+}
+
+model Meeting {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  status      String   @default("CREATED")
+
+  audioPath   String?
+
+  createdAt   DateTime @default(now())
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  transcript  Transcript?
+  summary     Summary?
+}
+
+model Transcript {
+  id          String   @id @default(uuid())
+  content     String
+
+  meetingId   String   @unique
+  meeting     Meeting  @relation(fields: [meetingId], references: [id])
+
+  createdAt   DateTime @default(now())
+}
+
+model Summary {
+  id        String   @id @default(cuid())
+  meetingId String   @unique
+  /// Markdown rendering, kept for display and for older rows.
+  content   String   @db.Text
+  /// Structured summary from Gemini; null for summaries created
+  /// before structured output was introduced.
+  data      Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
