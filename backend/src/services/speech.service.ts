@@ -1,13 +1,10 @@
 import axios from "axios";
 import path from "path";
+import { env } from "../lib/env";
+import { logger } from "../lib/logger";
 import { UpstreamError } from "../types/errors";
 
-const AI_SERVICE_URL =
-  process.env.AI_SERVICE_URL || "http://localhost:8000";
-
-// Whisper runs on CPU and can take several minutes on a long
-// recording, so allow far more than the axios default.
-const TRANSCRIBE_TIMEOUT_MS = 15 * 60 * 1000;
+const log = logger.child({ module: "speech.service" });
 
 export async function transcribeAudio(
   audioPath: string
@@ -16,16 +13,18 @@ export async function transcribeAudio(
   // directory; the Python service needs an absolute one.
   const absolutePath = path.resolve(audioPath);
 
-  console.log("Transcribing:", absolutePath);
+  log.debug("Requesting transcription", { absolutePath });
 
   try {
     const response = await axios.post(
-      `${AI_SERVICE_URL}/transcribe`,
+      `${env.aiServiceUrl}/transcribe`,
       {
         file_path: absolutePath,
       },
       {
-        timeout: TRANSCRIBE_TIMEOUT_MS,
+        // Whisper runs on CPU and can take several minutes on a long
+        // recording, so allow far more than the axios default.
+        timeout: env.transcriptionTimeoutMs,
       }
     );
 
@@ -40,6 +39,11 @@ export async function transcribeAudio(
     return text.trim();
   } catch (error) {
     if (axios.isAxiosError(error)) {
+      log.error("Transcription request failed", error, {
+        aiServiceUrl: env.aiServiceUrl,
+        code: error.code,
+      });
+
       if (error.code === "ECONNREFUSED") {
         throw UpstreamError(
           "Could not reach the transcription service. Please make " +

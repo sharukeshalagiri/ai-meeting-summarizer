@@ -1,4 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
+import { env } from "../lib/env";
+import { logger } from "../lib/logger";
 import { AppError, BadRequest, UpstreamError } from "../types/errors";
 import {
   SUMMARY_SCHEMA,
@@ -7,23 +9,18 @@ import {
   type StructuredSummary,
 } from "../types/summary";
 
+const log = logger.child({ module: "summary.service" });
+
 let client: GoogleGenAI | null = null;
 
-// Constructed lazily: imports are hoisted above dotenv.config() in
-// server.ts, so the key is not in process.env at module-eval time.
+/**
+ * Built on first use rather than at import time. env.ts validates the
+ * key at startup, so this only avoids constructing a client that may
+ * never be needed.
+ */
 function getClient(): GoogleGenAI {
   if (!client) {
-    const apiKey = process.env.GEMINI_API_KEY;
-
-    if (!apiKey) {
-      throw new AppError(
-        "The summary service is not configured. Set GEMINI_API_KEY " +
-          "in backend/.env.",
-        500
-      );
-    }
-
-    client = new GoogleGenAI({ apiKey });
+    client = new GoogleGenAI({ apiKey: env.geminiApiKey });
   }
 
   return client;
@@ -216,10 +213,11 @@ async function withRetry<T>(
 
       const delay = 1500 * (attempt + 1);
 
-      console.warn(
-        `Gemini call failed (attempt ${attempt + 1}/${attempts}), ` +
-          `retrying in ${delay}ms`
-      );
+      log.warn("Gemini call failed, retrying", {
+        attempt: attempt + 1,
+        attempts,
+        delayMs: delay,
+      });
 
       await sleep(delay);
     }
@@ -242,7 +240,7 @@ export async function generateSummary(
   try {
     const response = await withRetry(() =>
       getClient().models.generateContent({
-        model: "gemini-flash-latest",
+        model: env.geminiModel,
 
         contents: `Transcript:\n${transcript}`,
 
@@ -268,7 +266,7 @@ export async function generateSummary(
 
     // The wrapped message below is deliberately generic, so keep the
     // upstream detail in the logs for diagnosis.
-    console.error("Gemini request failed:", detail);
+    log.error("Gemini request failed", error, { detail });
 
     if (/api[_ ]?key|permission|unauthenticated|401|403/i.test(detail)) {
       throw UpstreamError(

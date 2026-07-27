@@ -1,50 +1,24 @@
-import { prisma } from "../lib/prisma";
+import { logger } from "../lib/logger";
+import * as meetingRepo from "../repositories/meeting.repository";
+import * as summaryRepo from "../repositories/summary.repository";
+import * as transcriptRepo from "../repositories/transcript.repository";
+import * as userRepo from "../repositories/user.repository";
 import { BadRequest, NotFound } from "../types/errors";
+import { MeetingStatus, type MeetingStatusValue } from "../types/meeting";
 import { toJsonValue } from "../types/summary";
 import { transcribeAudio } from "./speech.service";
 import { generateSummary } from "./summary.service";
 
-export const MeetingStatus = {
-  CREATED: "CREATED",
-  PROCESSING: "PROCESSING",
-  TRANSCRIBED: "TRANSCRIBED",
-  COMPLETED: "COMPLETED",
-  FAILED: "FAILED",
-} as const;
-
-export type MeetingStatusValue =
-  (typeof MeetingStatus)[keyof typeof MeetingStatus];
-
-const withRelations = {
-  transcript: true,
-  summary: true,
-} as const;
+const log = logger.child({ module: "meeting.service" });
 
 export const createMeeting = async (input: {
-  title?: unknown;
-  description?: unknown;
-  userId?: unknown;
+  title: string;
+  description: string | null;
+  userId?: string | null;
 }) => {
-  const title =
-    typeof input.title === "string" ? input.title.trim() : "";
-
-  if (!title) {
-    throw BadRequest("title is required");
-  }
-
-  const description =
-    typeof input.description === "string" ? input.description : null;
-
   // The MVP is single-user: fall back to the existing account so the
   // client does not have to hardcode an id.
-  const ownerId =
-    typeof input.userId === "string" && input.userId
-      ? input.userId
-      : (
-          await prisma.user.findFirst({
-            orderBy: { createdAt: "asc" },
-          })
-        )?.id;
+  const ownerId = input.userId ?? (await userRepo.findFirst())?.id;
 
   if (!ownerId) {
     throw BadRequest(
@@ -52,22 +26,21 @@ export const createMeeting = async (input: {
     );
   }
 
-  return prisma.meeting.create({
-    data: { title, description, userId: ownerId },
+  const meeting = await meetingRepo.create({
+    title: input.title,
+    description: input.description,
+    userId: ownerId,
   });
+
+  log.info("Meeting created", { meetingId: meeting.id });
+
+  return meeting;
 };
 
-export const listMeetings = async () =>
-  prisma.meeting.findMany({
-    orderBy: { createdAt: "desc" },
-    include: withRelations,
-  });
+export const listMeetings = () => meetingRepo.findAll();
 
 export const getMeeting = async (meetingId: string) => {
-  const meeting = await prisma.meeting.findUnique({
-    where: { id: meetingId },
-    include: withRelations,
-  });
+  const meeting = await meetingRepo.findById(meetingId);
 
   if (!meeting) {
     throw NotFound("Meeting not found");
@@ -76,26 +49,44 @@ export const getMeeting = async (meetingId: string) => {
   return meeting;
 };
 
-export const setStatus = async (
-  meetingId: string,
-  status: MeetingStatusValue
-) =>
-  prisma.meeting.update({
-    where: { id: meetingId },
-    data: { status },
-  });
+/** Throws unless the meeting exists; avoids loading relations. */
+const assertExists = async (meetingId: string): Promise<void> => {
+  if (!(await meetingRepo.exists(meetingId))) {
+    throw NotFound("Meeting not found");
+  }
+};
+
+const setStatus = (meetingId: string, status: MeetingStatusValue) =>
+  meetingRepo.updateStatus(meetingId, status);
+
+/** Best effort: bookkeeping must never mask the original failure. */
+const markFailed = async (meetingId: string): Promise<void> => {
+  try {
+    await setStatus(meetingId, MeetingStatus.FAILED);
+  } catch (error) {
+    log.warn("Could not mark meeting as failed", {
+      meetingId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
 
 /** Records the uploaded file against the meeting. */
 export const attachAudio = async (
   meetingId: string,
   audioPath: string
 ) => {
-  await getMeeting(meetingId);
+  await assertExists(meetingId);
 
-  return prisma.meeting.update({
-    where: { id: meetingId },
-    data: { audioPath, status: MeetingStatus.CREATED },
-  });
+  const meeting = await meetingRepo.updateAudio(
+    meetingId,
+    audioPath,
+    MeetingStatus.CREATED
+  );
+
+  log.info("Audio attached", { meetingId, audioPath });
+
+  return meeting;
 };
 
 /** Runs Whisper for a meeting and stores the result. */
@@ -109,62 +100,75 @@ export const transcribeMeeting = async (meetingId: string) => {
   await setStatus(meetingId, MeetingStatus.PROCESSING);
 
   try {
+    const startedAt = Date.now();
+
     const content = await transcribeAudio(meeting.audioPath);
 
-    const transcript = await prisma.transcript.upsert({
-      where: { meetingId },
-      update: { content },
-      create: { meetingId, content },
-    });
+    const transcript = await transcriptRepo.upsert(meetingId, content);
 
     await setStatus(meetingId, MeetingStatus.TRANSCRIBED);
 
+    log.info("Transcription complete", {
+      meetingId,
+      durationMs: Date.now() - startedAt,
+      characters: content.length,
+    });
+
     return transcript;
   } catch (error) {
+    log.error("Transcription failed", error, { meetingId });
+
     await markFailed(meetingId);
+
     throw error;
   }
 };
 
 /** Runs Gemini over a stored transcript and saves the summary. */
 export const summarizeMeeting = async (meetingId: string) => {
-  await getMeeting(meetingId);
+  await assertExists(meetingId);
 
-  const transcript = await prisma.transcript.findUnique({
-    where: { meetingId },
-  });
+  const transcript = await transcriptRepo.findByMeetingId(meetingId);
 
   if (!transcript) {
     throw NotFound("Transcript not found");
   }
 
   try {
+    const startedAt = Date.now();
+
     const { structured, markdown } = await generateSummary(
       transcript.content
     );
 
-    // Store both: `data` drives the rich UI, `content` stays readable
-    // on its own and matches summaries created before this change.
-    const data = toJsonValue(structured);
-
-    const summary = await prisma.summary.upsert({
-      where: { meetingId },
-      update: { content: markdown, data },
-      create: { meetingId, content: markdown, data },
-    });
+    const summary = await summaryRepo.upsert(
+      meetingId,
+      markdown,
+      toJsonValue(structured)
+    );
 
     await setStatus(meetingId, MeetingStatus.COMPLETED);
 
+    log.info("Summary complete", {
+      meetingId,
+      durationMs: Date.now() - startedAt,
+      actionItems: structured.actionItems.length,
+    });
+
     return summary;
   } catch (error) {
+    log.error("Summary generation failed", error, { meetingId });
+
     await markFailed(meetingId);
+
     throw error;
   }
 };
 
 /**
- * Full pipeline used by the single-request upload flow.
- * The staged frontend calls transcribe/summarize separately.
+ * Full pipeline used by the single-request upload flow. The staged
+ * frontend calls transcribe and summarize separately so it can report
+ * progress.
  */
 export const processMeeting = async (
   meetingId: string,
@@ -180,13 +184,4 @@ export const processMeeting = async (
     transcript,
     summary,
   };
-};
-
-/**
- * Best-effort: never let bookkeeping mask the original failure.
- */
-const markFailed = async (meetingId: string) => {
-  await setStatus(meetingId, MeetingStatus.FAILED).catch(() => {
-    /* the underlying error matters more */
-  });
 };

@@ -1,10 +1,10 @@
-import express from "express";
+import { Router } from "express";
 import {
   createTranscript,
   getTranscripts,
-} from "../controller/transcript.controller";
+} from "../controllers/transcript.controller";
 
-const router = express.Router();
+const router = Router();
 
 router.post("/", createTranscript);
 router.get("/", getTranscripts);
