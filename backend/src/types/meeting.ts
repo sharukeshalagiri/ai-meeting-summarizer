@@ -7,6 +7,8 @@
  */
 export const MeetingStatus = {
   CREATED: "CREATED",
+  /** Browser tab capture in progress; only live meetings enter this. */
+  LIVE: "LIVE",
   PROCESSING: "PROCESSING",
   TRANSCRIBED: "TRANSCRIBED",
   COMPLETED: "COMPLETED",

@@ -1,8 +1,16 @@
 import axios from "axios";
 import type { ApiResponse } from "../types/api";
 
+/**
+ * Reads the API origin from the environment so a deployed build can
+ * point somewhere other than localhost, while development keeps
+ * working with no configuration.
+ */
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
+
 export const api = axios.create({
-  baseURL: "http://localhost:5000/api",
+  baseURL: API_BASE_URL,
 });
 
 /**
@@ -65,6 +73,21 @@ export const postData = async <T>(
   config?: Parameters<typeof api.post>[2]
 ): Promise<T> => {
   const res = await api.post<ApiResponse<T>>(url, body, config);
+
+  return unwrap(res.data);
+};
+
+export const patchData = async <T>(
+  url: string,
+  body?: unknown
+): Promise<T> => {
+  const res = await api.patch<ApiResponse<T>>(url, body);
+
+  return unwrap(res.data);
+};
+
+export const deleteData = async <T>(url: string): Promise<T> => {
+  const res = await api.delete<ApiResponse<T>>(url);
 
   return unwrap(res.data);
 };

@@ -22,25 +22,101 @@ model Meeting {
   description String?
   status      String   @default("CREATED")
 
+  /// UPLOAD for a recorded file, LIVE for a captured browser tab.
+  source      String   @default("UPLOAD")
+  /// Conferencing platform a live meeting was captured from, when known.
+  platform    String?
+
   audioPath   String?
+
+  /// Wall-clock length in seconds. Derived from the last transcript
+  /// segment for uploads and from session elapsed time for live
+  /// meetings, so analytics can aggregate without re-reading audio.
+  durationSec Int?
+
+  startedAt   DateTime?
+  endedAt     DateTime?
 
   createdAt   DateTime @default(now())
 
   userId      String
   user        User     @relation(fields: [userId], references: [id])
 
-  transcript  Transcript?
-  summary     Summary?
+  transcript   Transcript?
+  summary      Summary?
+  liveSession  LiveSession?
+
+  segments     TranscriptSegment[]
+  actionItems  ActionItem[]
+  chatMessages ChatMessage[]
+
+  @@index([createdAt])
+  @@index([source])
 }
 
 model Transcript {
   id          String   @id @default(uuid())
-  content     String
+  content     String   @db.Text
 
   meetingId   String   @unique
-  meeting     Meeting  @relation(fields: [meetingId], references: [id])
+  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   createdAt   DateTime @default(now())
+}
+
+/// One timestamped, speaker-attributed slice of a transcript.
+///
+/// Stored alongside Transcript.content rather than replacing it: the
+/// flat text stays the source of truth for summarization and for
+/// meetings recorded before diarization existed, while segments drive
+/// the reader UI, citations, and embeddings.
+model TranscriptSegment {
+  id        String   @id @default(uuid())
+
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// Position in the transcript. Unique per meeting so re-running
+  /// transcription replaces segments deterministically.
+  idx       Int
+
+  speaker   String   @default("Speaker 1")
+  text      String   @db.Text
+
+  /// Offsets from the start of the recording, in milliseconds.
+  startMs   Int
+  endMs     Int
+
+  createdAt DateTime @default(now())
+
+  embedding SegmentEmbedding?
+
+  @@unique([meetingId, idx])
+  @@index([meetingId, startMs])
+}
+
+/// Vector representation of a segment, used for semantic search.
+///
+/// Split from TranscriptSegment so listing a transcript never pulls
+/// hundreds of floats per row across the wire.
+model SegmentEmbedding {
+  segmentId String            @id
+  segment   TranscriptSegment @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+
+  /// Denormalized so a search can filter by meeting without a join.
+  meetingId String
+
+  /// Unit-normalized embedding, so cosine similarity reduces to a dot
+  /// product. Stored as float8[] because this deployment's PostgreSQL
+  /// has no pgvector -- see docs/DECISIONS.md.
+  embedding Float[]
+
+  model     String
+  dims      Int
+
+  createdAt DateTime @default(now())
+
+  @@index([meetingId])
 }
 
 model Summary {
@@ -48,11 +124,109 @@ model Summary {
   meetingId String   @unique
   /// Markdown rendering, kept for display and for older rows.
   content   String   @db.Text
-  /// Structured summary from Gemini; null for summaries created
-  /// before structured output was introduced.
+  /// Structured meeting intelligence from Gemini; null for summaries
+  /// created before structured output was introduced.
   data      Json?
+
+  /// Lifted out of `data` so analytics can group without scanning
+  /// JSON. One of POSITIVE, NEUTRAL, NEGATIVE, MIXED.
+  sentiment String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+}
+
+/// Action items promoted from the summary JSON into rows.
+///
+/// A table rather than a JSON field because they are queried across
+/// meetings (open tasks by owner, completion rate) and because their
+/// status changes independently of the summary that produced them.
+model ActionItem {
+  id        String   @id @default(uuid())
+
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  task      String   @db.Text
+  owner     String?
+  /// Kept as free text: the model quotes deadlines as spoken
+  /// ("end of next sprint"), which does not always resolve to a date.
+  dueDate   String?
+
+  priority  String   @default("MEDIUM")
+  status    String   @default("PENDING")
+
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([meetingId])
+  @@index([status])
+}
+
+/// A browser-tab capture in progress.
+model LiveSession {
+  id        String   @id @default(uuid())
+
+  meetingId String   @unique
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// ACTIVE while chunks are arriving, ENDED once finalized.
+  status    String   @default("ACTIVE")
+  platform  String?
+
+  chunkCount      Int  @default(0)
+  /// Total captured audio, advanced by each chunk's duration.
+  elapsedMs       Int  @default(0)
+  /// Elapsed mark at which the last rolling summary was produced, so
+  /// the interval survives a server restart.
+  lastRollingAtMs Int  @default(0)
+
+  lastChunkAt DateTime?
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+
+  rollingSummaries RollingSummary[]
+}
+
+/// Point-in-time summary generated while a live meeting runs.
+model RollingSummary {
+  id        String      @id @default(uuid())
+
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  /// Elapsed milliseconds covered at the time of generation.
+  atMs      Int
+  data      Json
+
+  createdAt DateTime @default(now())
+
+  @@index([sessionId, atMs])
+}
+
+/// Turn in an AI chat conversation grounded in transcripts.
+model ChatMessage {
+  id             String @id @default(uuid())
+
+  /// Groups turns into a thread. Scoped per meeting, or to the
+  /// workspace-wide thread when meetingId is null.
+  conversationId String
+
+  /// Null means the question ranged across every meeting.
+  meetingId String?
+  meeting   Meeting? @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// "user" or "assistant".
+  role      String
+  content   String   @db.Text
+
+  /// Segment references backing an assistant answer.
+  citations Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
 }

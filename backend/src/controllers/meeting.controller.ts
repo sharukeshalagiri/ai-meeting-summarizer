@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import * as actionItemService from "../services/actionItem.service";
 import * as meetingService from "../services/meeting.service";
 import * as summaryLookup from "../services/summaryLookup.service";
 import * as transcriptService from "../services/transcript.service";
@@ -62,5 +63,35 @@ export const getMeetingSummary = asyncHandler(
     );
 
     return sendSuccess(res, summary, "Summary fetched");
+  }
+);
+
+export const getMeetingSegments = asyncHandler(
+  async (req: Request, res: Response) => {
+    const segments = await transcriptService.getSegmentsByMeeting(
+      requireParam(req.params.id, "meeting id")
+    );
+
+    return sendSuccess(res, segments, "Segments fetched");
+  }
+);
+
+export const getMeetingActionItems = asyncHandler(
+  async (req: Request, res: Response) => {
+    const items = await actionItemService.listByMeeting(
+      requireParam(req.params.id, "meeting id")
+    );
+
+    return sendSuccess(res, items, "Action items fetched");
+  }
+);
+
+export const deleteMeeting = asyncHandler(
+  async (req: Request, res: Response) => {
+    await meetingService.deleteMeeting(
+      requireParam(req.params.id, "meeting id")
+    );
+
+    return sendSuccess(res, { deleted: true }, "Meeting deleted");
   }
 );

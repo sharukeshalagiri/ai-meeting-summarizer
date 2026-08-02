@@ -2,29 +2,30 @@ interface Props {
   status: string;
 }
 
-/** Shared so the dashboard and detail page label statuses identically. */
+/**
+ * Status label and tone in one place, so the dashboard and detail page
+ * cannot describe the same state differently.
+ */
+const STATUS: Record<string, { label: string; tone: string }> = {
+  COMPLETED: { label: "Completed", tone: "tone-good" },
+  FAILED: { label: "Failed", tone: "tone-critical" },
+  PROCESSING: { label: "Processing", tone: "tone-busy" },
+  LIVE: { label: "Live", tone: "tone-live" },
+  TRANSCRIBED: { label: "Transcribed", tone: "tone-neutral" },
+  CREATED: { label: "Created", tone: "" },
+};
+
 function StatusBadge({ status }: Props) {
-  const tone =
-    status === "COMPLETED"
-      ? "badge-ok"
-      : status === "FAILED"
-        ? "badge-error"
-        : status === "PROCESSING"
-          ? "badge-busy"
-          : "";
+  const entry = STATUS[status] ?? { label: status, tone: "" };
 
-  const label =
-    status === "COMPLETED"
-      ? "Completed"
-      : status === "FAILED"
-        ? "Failed"
-        : status === "PROCESSING"
-          ? "Processing"
-          : status === "TRANSCRIBED"
-            ? "Transcribed"
-            : "Created";
-
-  return <span className={`badge ${tone}`}>{label}</span>;
+  return (
+    <span className={`badge ${entry.tone}`}>
+      {status === "LIVE" && (
+        <span className="rec-dot sm" aria-hidden="true" />
+      )}
+      {entry.label}
+    </span>
+  );
 }
 
 export default StatusBadge;

@@ -1,13 +1,33 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getErrorMessage, postData } from "../api/api";
+import ErrorState from "../components/ErrorState";
+import { Skeleton } from "../components/Skeleton";
 import StatusBadge from "../components/StatusBadge";
 import SummaryView from "../components/SummaryView";
+import TranscriptView from "../components/TranscriptView";
 import { useFetch } from "../hooks/useFetch";
-import type { Meeting, Summary, Transcript } from "../types/meeting";
+import type {
+  Meeting,
+  Segment,
+  Summary,
+  Transcript,
+} from "../types/meeting";
+import { formatDate, formatDuration } from "../utils/format";
+
+const TABS = [
+  { key: "summary", label: "Summary" },
+  { key: "transcript", label: "Transcript" },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
 
 function MeetingDetails() {
   const { id } = useParams();
+  const [params] = useSearchParams();
+
+  // A chat citation links here with the moment it cited.
+  const focusMs = params.get("t") ? Number(params.get("t")) : null;
 
   const {
     data: meeting,
@@ -16,6 +36,13 @@ function MeetingDetails() {
     refetch,
   } = useFetch<Meeting>(`/meetings/${id}`);
 
+  const { data: segments } = useFetch<Segment[]>(
+    `/meetings/${id}/segments`
+  );
+
+  const [tab, setTab] = useState<TabKey>(
+    focusMs != null ? "transcript" : "summary"
+  );
   const [retryError, setRetryError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
 
@@ -33,7 +60,7 @@ function MeetingDetails() {
         );
       }
 
-      setRetrying("Generating Summary");
+      setRetrying("Generating summary");
       await postData<Summary>(`/meetings/${id}/summarize`, undefined, {
         timeout: 10 * 60 * 1000,
       });
@@ -50,7 +77,7 @@ function MeetingDetails() {
   if (loading) {
     return (
       <div className="page">
-        <p className="muted">Loading meeting...</p>
+        <Skeleton rows={3} />
       </div>
     );
   }
@@ -59,37 +86,63 @@ function MeetingDetails() {
     return (
       <div className="page">
         <p>
-          <Link to="/">&larr; Back to dashboard</Link>
+          <Link to="/" className="back-link">
+            &larr; Back to meetings
+          </Link>
         </p>
 
-        <div role="alert" className="alert">
-          {error ?? "Meeting not found."}
-        </div>
-
-        <button className="secondary" onClick={() => void refetch()}>
-          Retry
-        </button>
+        <ErrorState
+          message={error ?? "Meeting not found."}
+          onRetry={() => void refetch()}
+        />
       </div>
     );
   }
 
-  const isProcessing = meeting.status === "PROCESSING";
+  const isProcessing =
+    meeting.status === "PROCESSING" || meeting.status === "LIVE";
   const hasFailed = meeting.status === "FAILED";
   const incomplete = hasFailed || !meeting.summary;
+
+  const duration = formatDuration(meeting.durationSec);
 
   return (
     <div className="page">
       <p>
-        <Link to="/">&larr; Back to dashboard</Link>
+        <Link to="/" className="back-link">
+          &larr; Back to meetings
+        </Link>
       </p>
 
-      <div className="header-row">
-        <h1 style={{ margin: 0 }}>{meeting.title}</h1>
+      <header className="page-header">
+        <div>
+          <h1>{meeting.title}</h1>
 
-        <StatusBadge status={meeting.status} />
-      </div>
+          <p className="muted tiny meta-row">
+            <StatusBadge status={meeting.status} />
 
-      {meeting.description && <p>{meeting.description}</p>}
+            {meeting.source === "LIVE" && (
+              <span className="chip">Live capture</span>
+            )}
+
+            <span>{formatDate(meeting.createdAt)}</span>
+
+            {duration && <span>{duration}</span>}
+          </p>
+        </div>
+
+        <div className="actions">
+          <Link to={`/ask?meetingId=${meeting.id}`}>
+            <button type="button" className="secondary sm">
+              Ask about this meeting
+            </button>
+          </Link>
+        </div>
+      </header>
+
+      {meeting.description && (
+        <p className="description">{meeting.description}</p>
+      )}
 
       {retryError && (
         <div role="alert" className="alert">
@@ -105,8 +158,16 @@ function MeetingDetails() {
 
       {isProcessing && !retrying && (
         <div className="card">
-          <p>This meeting is still being processed.</p>
-          <button className="secondary" onClick={() => void refetch()}>
+          <p>
+            {meeting.status === "LIVE"
+              ? "This meeting is being captured right now."
+              : "This meeting is still being processed."}
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void refetch()}
+          >
             Refresh
           </button>
         </div>
@@ -120,37 +181,58 @@ function MeetingDetails() {
               : "This meeting has no summary yet."}
           </p>
 
-          <button onClick={() => void retryProcessing()}>
-            {meeting.transcript
-              ? "Generate summary"
-              : "Retry processing"}
+          <button type="button" onClick={() => void retryProcessing()}>
+            {meeting.transcript ? "Generate summary" : "Retry processing"}
           </button>
         </div>
       )}
 
-      <hr />
-
-      <h2>Transcript</h2>
-
-      <div className="content-box">
-        {meeting.transcript?.content || (
-          <span className="muted">Transcript not generated.</span>
-        )}
+      <div className="tabs" role="tablist" aria-label="Meeting views">
+        {TABS.map((entry) => (
+          <button
+            key={entry.key}
+            type="button"
+            role="tab"
+            id={`tab-${entry.key}`}
+            aria-selected={tab === entry.key}
+            aria-controls={`panel-${entry.key}`}
+            className={`tab ${tab === entry.key ? "is-active" : ""}`}
+            onClick={() => setTab(entry.key)}
+          >
+            {entry.label}
+          </button>
+        ))}
       </div>
 
-      <hr />
-
-      <h2>AI Summary</h2>
-
-      {meeting.summary?.data ? (
-        <div className="content-box">
-          <SummaryView summary={meeting.summary.data} />
-        </div>
-      ) : (
-        <div className="content-box">
-          {meeting.summary?.content || (
-            <span className="muted">Summary not generated.</span>
+      {tab === "summary" && (
+        <div
+          role="tabpanel"
+          id="panel-summary"
+          aria-labelledby="tab-summary"
+        >
+          {meeting.summary?.data ? (
+            <SummaryView summary={meeting.summary.data} />
+          ) : (
+            <div className="content-box">
+              {meeting.summary?.content || (
+                <span className="muted">Summary not generated.</span>
+              )}
+            </div>
           )}
+        </div>
+      )}
+
+      {tab === "transcript" && (
+        <div
+          role="tabpanel"
+          id="panel-transcript"
+          aria-labelledby="tab-transcript"
+        >
+          <TranscriptView
+            segments={segments ?? []}
+            fallback={meeting.transcript?.content}
+            focusMs={focusMs}
+          />
         </div>
       )}
     </div>

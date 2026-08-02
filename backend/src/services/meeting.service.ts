@@ -1,12 +1,17 @@
 import { logger } from "../lib/logger";
+import * as actionItemRepo from "../repositories/actionItem.repository";
 import * as meetingRepo from "../repositories/meeting.repository";
+import * as segmentRepo from "../repositories/segment.repository";
 import * as summaryRepo from "../repositories/summary.repository";
 import * as transcriptRepo from "../repositories/transcript.repository";
 import * as userRepo from "../repositories/user.repository";
 import { BadRequest, NotFound } from "../types/errors";
 import { MeetingStatus, type MeetingStatusValue } from "../types/meeting";
+import { toSpeakerTranscript } from "../types/segment";
 import { toJsonValue } from "../types/summary";
-import { transcribeAudio } from "./speech.service";
+import { diarizeSegments } from "./diarization.service";
+import { indexMeeting } from "./embedding.service";
+import { transcribeAudioDetailed } from "./speech.service";
 import { generateSummary } from "./summary.service";
 
 const log = logger.child({ module: "meeting.service" });
@@ -15,6 +20,8 @@ export const createMeeting = async (input: {
   title: string;
   description: string | null;
   userId?: string | null;
+  source?: string;
+  platform?: string | null;
 }) => {
   // The MVP is single-user: fall back to the existing account so the
   // client does not have to hardcode an id.
@@ -30,9 +37,14 @@ export const createMeeting = async (input: {
     title: input.title,
     description: input.description,
     userId: ownerId,
+    source: input.source ?? "UPLOAD",
+    platform: input.platform ?? null,
   });
 
-  log.info("Meeting created", { meetingId: meeting.id });
+  log.info("Meeting created", {
+    meetingId: meeting.id,
+    source: meeting.source,
+  });
 
   return meeting;
 };
@@ -54,6 +66,15 @@ const assertExists = async (meetingId: string): Promise<void> => {
   if (!(await meetingRepo.exists(meetingId))) {
     throw NotFound("Meeting not found");
   }
+};
+
+export const deleteMeeting = async (meetingId: string) => {
+  await assertExists(meetingId);
+
+  // Every dependent row cascades, so one delete is enough.
+  await meetingRepo.remove(meetingId);
+
+  log.info("Meeting deleted", { meetingId });
 };
 
 const setStatus = (meetingId: string, status: MeetingStatusValue) =>
@@ -89,7 +110,10 @@ export const attachAudio = async (
   return meeting;
 };
 
-/** Runs Whisper for a meeting and stores the result. */
+/**
+ * Runs Whisper for a meeting, attributes speakers, and stores both the
+ * flat transcript and its timestamped segments.
+ */
 export const transcribeMeeting = async (meetingId: string) => {
   const meeting = await getMeeting(meetingId);
 
@@ -102,16 +126,33 @@ export const transcribeMeeting = async (meetingId: string) => {
   try {
     const startedAt = Date.now();
 
-    const content = await transcribeAudio(meeting.audioPath);
+    const result = await transcribeAudioDetailed(meeting.audioPath);
 
-    const transcript = await transcriptRepo.upsert(meetingId, content);
+    const transcript = await transcriptRepo.upsert(
+      meetingId,
+      result.text
+    );
+
+    if (result.segments.length) {
+      const diarized = await diarizeSegments(result.segments);
+
+      await segmentRepo.replaceForMeeting(meetingId, diarized);
+    }
+
+    if (result.durationMs > 0) {
+      await meetingRepo.updateDuration(
+        meetingId,
+        Math.round(result.durationMs / 1000)
+      );
+    }
 
     await setStatus(meetingId, MeetingStatus.TRANSCRIBED);
 
     log.info("Transcription complete", {
       meetingId,
       durationMs: Date.now() - startedAt,
-      characters: content.length,
+      characters: result.text.length,
+      segments: result.segments.length,
     });
 
     return transcript;
@@ -122,6 +163,22 @@ export const transcribeMeeting = async (meetingId: string) => {
 
     throw error;
   }
+};
+
+/**
+ * Builds the text the summarizer reads.
+ *
+ * Prefers the speaker-attributed script so the model can tell who
+ * committed to what, and falls back to the flat transcript for
+ * meetings recorded before diarization existed.
+ */
+const summarizationInput = async (
+  meetingId: string,
+  fallback: string
+): Promise<string> => {
+  const segments = await segmentRepo.findByMeetingId(meetingId);
+
+  return segments.length ? toSpeakerTranscript(segments) : fallback;
 };
 
 /** Runs Gemini over a stored transcript and saves the summary. */
@@ -138,13 +195,21 @@ export const summarizeMeeting = async (meetingId: string) => {
     const startedAt = Date.now();
 
     const { structured, markdown } = await generateSummary(
-      transcript.content
+      await summarizationInput(meetingId, transcript.content)
     );
 
     const summary = await summaryRepo.upsert(
       meetingId,
       markdown,
-      toJsonValue(structured)
+      toJsonValue(structured),
+      structured.sentiment.overall
+    );
+
+    // Action items are promoted to rows so they can be tracked and
+    // counted across meetings, not just read inside one summary.
+    await actionItemRepo.replaceForMeeting(
+      meetingId,
+      structured.actionItems
     );
 
     await setStatus(meetingId, MeetingStatus.COMPLETED);
@@ -153,6 +218,16 @@ export const summarizeMeeting = async (meetingId: string) => {
       meetingId,
       durationMs: Date.now() - startedAt,
       actionItems: structured.actionItems.length,
+      sentiment: structured.sentiment.overall,
+    });
+
+    // Indexing powers search and chat, but a meeting is complete
+    // without it, so a failure here is logged rather than surfaced.
+    void indexMeeting(meetingId).catch((error) => {
+      log.warn("Background indexing failed", {
+        meetingId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     });
 
     return summary;

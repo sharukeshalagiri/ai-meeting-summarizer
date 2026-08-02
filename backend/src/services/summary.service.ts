@@ -1,54 +1,58 @@
-import { GoogleGenAI } from "@google/genai";
 import { env } from "../lib/env";
-import { logger } from "../lib/logger";
-import { AppError, BadRequest, UpstreamError } from "../types/errors";
 import {
+  getClient,
+  parseJsonResponse,
+  toGeminiError,
+  withRetry,
+} from "../lib/gemini";
+import { logger } from "../lib/logger";
+import { BadRequest, UpstreamError } from "../types/errors";
+import {
+  ROLLING_SUMMARY_SCHEMA,
   SUMMARY_SCHEMA,
+  asPriority,
+  asSentiment,
   type ActionItem,
+  type DiscussionTopic,
   type ImportantDate,
+  type MeetingSentiment,
+  type RollingSummaryData,
   type StructuredSummary,
 } from "../types/summary";
 
 const log = logger.child({ module: "summary.service" });
 
-let client: GoogleGenAI | null = null;
-
-/**
- * Built on first use rather than at import time. env.ts validates the
- * key at startup, so this only avoids constructing a client that may
- * never be needed.
- */
-function getClient(): GoogleGenAI {
-  if (!client) {
-    client = new GoogleGenAI({ apiKey: env.geminiApiKey });
-  }
-
-  return client;
-}
-
 const SYSTEM_INSTRUCTION = `
-You are an AI Meeting Assistant. Summarize meeting transcripts
-accurately and concisely.
+You are an AI Meeting Assistant. Extract structured intelligence from
+meeting transcripts accurately and concisely.
 
 Rules:
 - Only use information present in the transcript. Never invent
-  decisions, owners, or dates.
+  decisions, owners, dates, risks, or questions.
+- Transcripts may be labelled with speakers and timestamps in the form
+  "[12:34] Priya: ...". Use those labels to attribute action items and
+  decisions to the right person. Never put a timestamp in your output.
 - If an action item has no clear owner or due date, use null.
 - Quote dates as the speaker stated them; do not convert relative
   dates into calendar dates.
-- Return an empty array for any section the transcript does not
-  cover.
+- Distinguish a blocker (stopping work now) from a risk (might cause
+  problems later).
+- Return an empty array for any section the transcript does not cover.
+  An empty section is correct and expected; padding it is not.
 `.trim();
 
 /** Narrowing helpers: the API is schema-constrained, but the response
  *  is still parsed JSON, so validate before trusting it. */
 const asStringArray = (value: unknown): string[] =>
   Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
     : [];
 
 const asNullableString = (value: unknown): string | null =>
-  typeof value === "string" && value.trim() ? value : null;
+  typeof value === "string" && value.trim() ? value.trim() : null;
 
 const asActionItems = (value: unknown): ActionItem[] => {
   if (!Array.isArray(value)) return [];
@@ -62,9 +66,10 @@ const asActionItems = (value: unknown): ActionItem[] => {
 
     return [
       {
-        task: item.task,
+        task: item.task.trim(),
         owner: asNullableString(item.owner),
         dueDate: asNullableString(item.dueDate),
+        priority: asPriority(item.priority),
       },
     ];
   });
@@ -82,39 +87,63 @@ const asImportantDates = (value: unknown): ImportantDate[] => {
 
     return [
       {
-        date: item.date,
+        date: item.date.trim(),
         description:
-          typeof item.description === "string" ? item.description : "",
+          typeof item.description === "string"
+            ? item.description.trim()
+            : "",
       },
     ];
   });
 };
 
+const asDiscussionTopics = (value: unknown): DiscussionTopic[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((raw) => {
+    if (typeof raw !== "object" || raw === null) return [];
+
+    const item = raw as Record<string, unknown>;
+
+    if (typeof item.topic !== "string" || !item.topic.trim()) return [];
+
+    return [
+      {
+        topic: item.topic.trim(),
+        summary:
+          typeof item.summary === "string" ? item.summary.trim() : "",
+      },
+    ];
+  });
+};
+
+const asMeetingSentiment = (value: unknown): MeetingSentiment => {
+  if (typeof value !== "object" || value === null) {
+    return { overall: "NEUTRAL", rationale: "" };
+  }
+
+  const item = value as Record<string, unknown>;
+
+  return {
+    overall: asSentiment(item.overall),
+    rationale:
+      typeof item.rationale === "string" ? item.rationale.trim() : "",
+  };
+};
+
 /**
- * Validates a raw model response. Exported so the parsing rules can be
- * exercised without calling the API.
+ * Validates a raw model response, and doubles as the reader for rows
+ * stored before the schema was expanded: every field beyond the
+ * original five degrades to empty rather than throwing.
+ *
+ * Exported so the parsing rules can be exercised without calling the
+ * API.
  */
 export const parseStructuredSummary = (
-  raw: string
+  raw: string | Record<string, unknown>
 ): StructuredSummary => {
-  let parsed: unknown;
-
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw UpstreamError(
-      "The summary service returned a response we could not read. " +
-        "Please try again."
-    );
-  }
-
-  if (typeof parsed !== "object" || parsed === null) {
-    throw UpstreamError(
-      "The summary service returned an unexpected response."
-    );
-  }
-
-  const value = parsed as Record<string, unknown>;
+  const value =
+    typeof raw === "string" ? parseJsonResponse(raw, "summary") : raw;
 
   const executiveSummary =
     typeof value.executiveSummary === "string"
@@ -134,6 +163,13 @@ export const parseStructuredSummary = (
     actionItems: asActionItems(value.actionItems),
     importantDates: asImportantDates(value.importantDates),
     followUps: asStringArray(value.followUps),
+
+    risks: asStringArray(value.risks),
+    blockers: asStringArray(value.blockers),
+    openQuestions: asStringArray(value.openQuestions),
+    discussionTopics: asDiscussionTopics(value.discussionTopics),
+    keywords: asStringArray(value.keywords),
+    sentiment: asMeetingSentiment(value.sentiment),
   };
 };
 
@@ -147,10 +183,15 @@ export const toMarkdown = (summary: StructuredSummary): string => {
       lines.length ? lines.join("\n") : "_None recorded._"
     }`;
 
+  const bullets = (lines: string[]) => lines.map((line) => `- ${line}`);
+
   const actionLines = summary.actionItems.map((item) => {
     const details = [
       item.owner ? `owner: ${item.owner}` : null,
       item.dueDate ? `due: ${item.dueDate}` : null,
+      item.priority !== "MEDIUM"
+        ? `priority: ${item.priority.toLowerCase()}`
+        : null,
     ].filter(Boolean);
 
     return `- ${item.task}${
@@ -164,71 +205,34 @@ export const toMarkdown = (summary: StructuredSummary): string => {
       : `- **${entry.date}**`
   );
 
+  const topicLines = summary.discussionTopics.map((entry) =>
+    entry.summary
+      ? `- **${entry.topic}** — ${entry.summary}`
+      : `- **${entry.topic}**`
+  );
+
   return [
     `# Executive Summary\n\n${summary.executiveSummary}`,
-    section(
-      "Key Decisions",
-      summary.keyDecisions.map((line) => `- ${line}`)
-    ),
+    section("Key Decisions", bullets(summary.keyDecisions)),
     section("Action Items", actionLines),
     section("Important Dates", dateLines),
-    section(
-      "Follow Ups",
-      summary.followUps.map((line) => `- ${line}`)
-    ),
+    section("Risks", bullets(summary.risks)),
+    section("Blockers", bullets(summary.blockers)),
+    section("Open Questions", bullets(summary.openQuestions)),
+    section("Discussion Topics", topicLines),
+    section("Follow Ups", bullets(summary.followUps)),
+    section("Keywords", bullets(summary.keywords)),
+    `# Sentiment\n\n${summary.sentiment.overall}${
+      summary.sentiment.rationale
+        ? ` — ${summary.sentiment.rationale}`
+        : ""
+    }`,
   ].join("\n\n");
 };
 
-const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Model overload (503) and rate limits are usually short-lived. */
-const isTransient = (error: unknown): boolean => {
-  const detail = error instanceof Error ? error.message : String(error);
-
-  return /unavailable|overloaded|high demand|503|429|rate.?limit/i.test(
-    detail
-  );
-};
-
 /**
- * Retries transient upstream failures with a widening delay. Permanent
- * errors (bad key, invalid request) are rethrown on the first attempt.
- */
-async function withRetry<T>(
-  operation: () => Promise<T>,
-  attempts = 3
-): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-
-      if (!isTransient(error) || attempt === attempts - 1) {
-        throw error;
-      }
-
-      const delay = 1500 * (attempt + 1);
-
-      log.warn("Gemini call failed, retrying", {
-        attempt: attempt + 1,
-        attempts,
-        delayMs: delay,
-      });
-
-      await sleep(delay);
-    }
-  }
-
-  throw lastError;
-}
-
-/**
- * Asks Gemini for a schema-constrained JSON summary and returns both
- * the structured object and a markdown rendering of it.
+ * Asks Gemini for schema-constrained meeting intelligence and returns
+ * both the structured object and a markdown rendering of it.
  */
 export async function generateSummary(
   transcript: string
@@ -256,41 +260,79 @@ export async function generateSummary(
 
     return { structured, markdown: toMarkdown(structured) };
   } catch (error) {
-    // Configuration and validation problems are already user-facing.
-    if (error instanceof AppError) {
-      throw error;
-    }
-
-    const detail =
-      error instanceof Error ? error.message : String(error);
-
-    // The wrapped message below is deliberately generic, so keep the
-    // upstream detail in the logs for diagnosis.
-    log.error("Gemini request failed", error, { detail });
-
-    if (/api[_ ]?key|permission|unauthenticated|401|403/i.test(detail)) {
-      throw UpstreamError(
-        "The summary service rejected our credentials. Check " +
-          "GEMINI_API_KEY."
-      );
-    }
-
-    if (/quota|rate.?limit|429/i.test(detail)) {
-      throw UpstreamError(
-        "The summary service is rate limited. Please try again in a " +
-          "moment."
-      );
-    }
-
-    if (/unavailable|overloaded|high demand|503/i.test(detail)) {
-      throw UpstreamError(
-        "The summary service is temporarily overloaded. Please try " +
-          "again in a minute."
-      );
-    }
-
-    throw UpstreamError(
+    throw toGeminiError(
+      error,
       "Could not generate a summary right now. Please try again."
+    );
+  }
+}
+
+const ROLLING_INSTRUCTION = `
+You are an AI Meeting Assistant summarizing a meeting that is still in
+progress.
+
+Rules:
+- Summarize only what has been said so far. The meeting is not over.
+- Do not speculate about what will be decided later.
+- Only use information present in the transcript.
+- Return empty arrays for anything not yet covered.
+`.trim();
+
+/**
+ * Point-in-time summary for a live meeting.
+ *
+ * Failures are the caller's to swallow: a missed rolling update should
+ * never interrupt an ongoing capture.
+ */
+export async function generateRollingSummary(
+  transcript: string
+): Promise<RollingSummaryData> {
+  if (!transcript.trim()) {
+    throw BadRequest("There is no transcript text to summarize yet.");
+  }
+
+  try {
+    const response = await withRetry(
+      () =>
+        getClient().models.generateContent({
+          model: env.geminiModel,
+
+          contents: `Meeting so far:\n${transcript}`,
+
+          config: {
+            systemInstruction: ROLLING_INSTRUCTION,
+            responseMimeType: "application/json",
+            responseSchema: ROLLING_SUMMARY_SCHEMA,
+          },
+        }),
+      // One retry only: another chunk arrives within minutes, so a
+      // slow recovery is worse than skipping this update.
+      2
+    );
+
+    const value = parseJsonResponse(
+      response.text ?? "",
+      "rolling summary"
+    );
+
+    const headline =
+      typeof value.headline === "string" ? value.headline.trim() : "";
+
+    log.debug("Rolling summary generated", {
+      characters: transcript.length,
+    });
+
+    return {
+      headline: headline || "Meeting in progress.",
+      recentPoints: asStringArray(value.recentPoints),
+      decisions: asStringArray(value.decisions),
+      actionItems: asActionItems(value.actionItems),
+      openQuestions: asStringArray(value.openQuestions),
+    };
+  } catch (error) {
+    throw toGeminiError(
+      error,
+      "Could not generate a live update right now."
     );
   }
 }

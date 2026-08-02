@@ -3,13 +3,18 @@ import {
   summarizeMeeting,
   transcribeMeeting,
 } from "../controllers/ai.controller";
+import { getLiveState } from "../controllers/live.controller";
 import {
   createMeeting,
+  deleteMeeting,
+  getMeetingActionItems,
   getMeetingById,
+  getMeetingSegments,
   getMeetingSummary,
   getMeetingTranscript,
   getMeetings,
 } from "../controllers/meeting.controller";
+import { indexMeeting } from "../controllers/search.controller";
 import {
   saveMeetingAudio,
   uploadMeetingAudio,
@@ -31,9 +36,15 @@ const router = Router();
 router.post("/", createMeeting);
 router.get("/", getMeetings);
 router.get("/:id", getMeetingById);
+router.delete("/:id", deleteMeeting);
 
 router.get("/:id/transcript", getMeetingTranscript);
+router.get("/:id/segments", getMeetingSegments);
 router.get("/:id/summary", getMeetingSummary);
+router.get("/:id/action-items", getMeetingActionItems);
+
+// Live transcript and rolling summaries while a capture is running.
+router.get("/:id/live", getLiveState);
 
 // Upload only, so the client can drive each stage and show progress.
 router.post("/:id/audio", upload.single("audio"), saveMeetingAudio);
@@ -43,6 +54,7 @@ router.post("/:id/upload", upload.single("audio"), uploadMeetingAudio);
 
 router.post("/:id/transcribe", transcribeMeeting);
 router.post("/:id/summarize", summarizeMeeting);
+router.post("/:id/index", indexMeeting);
 
 // Must come after the upload routes to catch their multer errors.
 router.use(handleUploadErrors);

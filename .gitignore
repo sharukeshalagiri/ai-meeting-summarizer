@@ -1,34 +1,87 @@
-# dependencies
+# ================================
+# Dependencies
+# ================================
 node_modules/
 **/node_modules/
 
-# env / secrets
+
+# ================================
+# Environment / Secrets
+# ================================
 .env
 .env.local
 .env.*.local
 **/.env
 
-# build output
+
+# ================================
+# Build Output
+# ================================
 dist/
-build/
 **/dist/
+build/
+**/build/
 
-# uploads (user data)
-backend/uploads/
 
-# python
-__pycache__/
-**/__pycache__/
+# ================================
+# Temporary Files
+# ================================
+.tmp/
+**/.tmp/
+
+
+# ================================
+# Python Virtual Environments
+# ================================
+.venv/
+**/.venv/
 venv/
 **/venv/
-*.pyc
 
-# logs
+
+# ================================
+# Python Cache
+# ================================
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# ================================
+# User Uploads / Generated Data
+# ================================
+backend/uploads/
+
+
+# ================================
+# Audio / Video / Media Files
+# ================================
+*.ogg
+*.mp3
+*.wav
+*.m4a
+*.webm
+*.mp4
+
+
+# ================================
+# Logs
+# ================================
 *.log
 logs/
 
-# editor / OS
-.DS_Store
-Thumbs.db
+
+# ================================
+# IDE / Editor
+# ================================
 .vscode/
 .idea/
+
+
+# ================================
+# Operating System
+# ================================
+.DS_Store
+Thumbs.db

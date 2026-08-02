@@ -53,16 +53,42 @@ export const env = {
 
   geminiApiKey: required("GEMINI_API_KEY"),
   geminiModel: optional("GEMINI_MODEL", "gemini-flash-latest"),
+  embeddingModel: optional("EMBEDDING_MODEL", "gemini-embedding-2"),
+  /**
+   * Truncated embedding width. 768 keeps storage and the similarity
+   * scan cheap while retaining retrieval quality; the full 3072 is
+   * overkill for transcript segments.
+   */
+  embeddingDims: asNumber("EMBEDDING_DIMS", 768),
 
   aiServiceUrl: optional("AI_SERVICE_URL", "http://localhost:8000"),
 
   corsOrigin: optional("CORS_ORIGIN", "*"),
 
   uploadDir: optional("UPLOAD_DIR", "uploads/meetings"),
+  /** Live capture chunks, deleted once transcribed. */
+  liveChunkDir: optional("LIVE_CHUNK_DIR", "uploads/live"),
   maxUploadBytes: asNumber("MAX_UPLOAD_MB", 500) * 1024 * 1024,
+  /** One chunk of captured audio; far smaller than a full recording. */
+  maxChunkBytes: asNumber("MAX_CHUNK_MB", 25) * 1024 * 1024,
 
   transcriptionTimeoutMs:
     asNumber("TRANSCRIPTION_TIMEOUT_MINUTES", 15) * 60 * 1000,
+
+  /**
+   * How much captured audio to accumulate between rolling summaries.
+   * The brief calls for 5-10 minutes; 7 sits in the middle and keeps
+   * Gemini calls well inside the free tier on a long meeting.
+   */
+  rollingSummaryEveryMs:
+    asNumber("ROLLING_SUMMARY_MINUTES", 7) * 60 * 1000,
+
+  /**
+   * Silence after which a live session is assumed abandoned. Chunks
+   * arrive far more often than this, so it only triggers when the tab
+   * is gone.
+   */
+  liveSessionIdleMs: asNumber("LIVE_SESSION_IDLE_MINUTES", 10) * 60 * 1000,
 } as const;
 
 export type Env = typeof env;

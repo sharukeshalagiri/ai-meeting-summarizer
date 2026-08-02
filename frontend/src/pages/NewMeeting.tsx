@@ -119,7 +119,15 @@ function NewMeeting() {
 
   return (
     <div className="page">
-      <h1>Create Meeting</h1>
+      <header className="page-header">
+        <div>
+          <h1>Upload a recording</h1>
+          <p className="muted">
+            Audio or video. It is transcribed, speakers are attributed,
+            and the meeting is summarized automatically.
+          </p>
+        </div>
+      </header>
 
       <form onSubmit={submit}>
         <div className="field">

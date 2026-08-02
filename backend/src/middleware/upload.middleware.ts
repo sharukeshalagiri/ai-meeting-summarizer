@@ -11,19 +11,26 @@ import {
 
 // multer will not create the destination for us.
 fs.mkdirSync(env.uploadDir, { recursive: true });
+fs.mkdirSync(env.liveChunkDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, env.uploadDir);
-  },
+const storageIn = (directory: string) =>
+  multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      cb(null, directory);
+    },
 
-  filename: (_req, file, cb) => {
-    // Strip characters that are unsafe in a Windows path.
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    filename: (_req, file, cb) => {
+      // Strip characters that are unsafe in a Windows path.
+      const safeName = file.originalname.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      );
 
-    cb(null, `${Date.now()}-${safeName}`);
-  },
-});
+      cb(null, `${Date.now()}-${safeName}`);
+    },
+  });
+
+const storage = storageIn(env.uploadDir);
 
 export const upload = multer({
   storage,
@@ -49,6 +56,36 @@ export const upload = multer({
           `Upload an audio or video file.`
       )
     );
+  },
+});
+
+/**
+ * Live capture chunks.
+ *
+ * Separate from `upload` because a chunk is a few seconds of webm
+ * rather than a whole recording: it lands in its own directory (the
+ * files are deleted once transcribed) and is capped far lower, so a
+ * runaway client cannot fill the disk.
+ */
+export const uploadChunk = multer({
+  storage: storageIn(env.liveChunkDir),
+
+  limits: {
+    fileSize: env.maxChunkBytes,
+  },
+
+  fileFilter: (_req, file, cb) => {
+    // MediaRecorder emits audio/webm, and Chrome appends a codec
+    // parameter, so match on the prefix rather than an exact type.
+    if (
+      file.mimetype.startsWith("audio/") ||
+      file.mimetype.startsWith("video/")
+    ) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error(`Unsupported chunk type "${file.mimetype}".`));
   },
 });
 
