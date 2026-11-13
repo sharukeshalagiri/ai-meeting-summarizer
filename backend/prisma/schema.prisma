@@ -37,6 +37,15 @@ model Meeting {
   startedAt   DateTime?
   endedAt     DateTime?
 
+  /// GENERAL | LECTURE | INTERVIEW | PROJECT | ONE_ON_ONE | AUTO. Picks
+  /// the summary flavour; AUTO lets the summarizer decide.
+  mode        String   @default("AUTO")
+
+  /// Background-job progress (Wave 3). Null until a job reports.
+  processingStage    String?
+  processingProgress Int?
+  processingError    String?
+
   createdAt   DateTime @default(now())
 
   userId      String
@@ -49,6 +58,8 @@ model Meeting {
   segments     TranscriptSegment[]
   actionItems  ActionItem[]
   chatMessages ChatMessage[]
+  speakers     SpeakerProfile[]
+  corrections  Correction[]
 
   @@index([createdAt])
   @@index([source])
@@ -87,12 +98,68 @@ model TranscriptSegment {
   startMs   Int
   endMs     Int
 
+  /// "mic" (left channel, the user) | "remote" (right channel) | null
+  /// for mono or pre-stereo audio.
+  channel    String?
+  /// Non-speech classification, e.g. MUSIC, NOISE, SILENCE. Null = speech.
+  noiseLabel String?
+  /// Word-level timings: [{ w, startMs, endMs, p? }].
+  words      Json?
+
+  speakerId String?
+  speakerProfile SpeakerProfile? @relation(fields: [speakerId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   embedding SegmentEmbedding?
 
   @@unique([meetingId, idx])
   @@index([meetingId, startMs])
+  @@index([speakerId])
+}
+
+/// A distinct speaker within one meeting, from diarization or a manual
+/// rename. Roster names live on LiveSession.roster, not here.
+model SpeakerProfile {
+  id          String   @id @default(uuid())
+
+  meetingId   String
+  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// Stable label within the meeting, e.g. "Speaker 1" or "mic".
+  label       String
+  /// Human name once known; null while anonymous.
+  displayName String?
+  /// Mean voice embedding; empty until acoustic diarization exists.
+  centroid    Float[]  @default([])
+  /// DIARIZATION | MANUAL | ENROLLED
+  source      String   @default("DIARIZATION")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  segments    TranscriptSegment[]
+
+  @@unique([meetingId, label])
+}
+
+/// A user's fix to model output, kept as training/eval signal.
+model Correction {
+  id        String   @id @default(uuid())
+
+  meetingId String
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+
+  /// What was corrected, e.g. SPEAKER, TRANSCRIPT_TEXT, ACTION_ITEM.
+  kind      String
+  /// Id of the corrected row (or a segment idx as a string); optional.
+  targetId  String?
+  before    Json
+  after     Json
+
+  createdAt DateTime @default(now())
+
+  @@index([meetingId, createdAt])
 }
 
 /// Vector representation of a segment, used for semantic search.
@@ -158,6 +225,18 @@ model ActionItem {
   priority  String   @default("MEDIUM")
   status    String   @default("PENDING")
 
+  /// Deadline exactly as spoken ("by Friday"); dueDate may later hold a
+  /// resolved date.
+  dueSpoken   String?
+  /// Who handed the task out, when different from the owner.
+  assignedBy  String?
+  /// Model confidence 0..1.
+  confidence  Float?
+  /// Supporting segments: [{ idx, quote? }] using TranscriptSegment.idx.
+  evidence    Json?
+  /// True when the item should be confirmed by a human before trusting.
+  needsReview Boolean  @default(false)
+
   completedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -188,7 +267,44 @@ model LiveSession {
   startedAt   DateTime  @default(now())
   endedAt     DateTime?
 
+  /// EXTENSION | DESKTOP | WEB | BOT; null for sessions before the
+  /// capture contract.
+  source    String?
+  /// Free-text context from the recorder (agenda, jargon, names).
+  hints     String[]  @default([])
+  /// Participant names reported by the recorder; name hints for
+  /// diarization, not speaker rows.
+  roster    String[]  @default([])
+
   rollingSummaries RollingSummary[]
+  chunks           LiveChunk[]
+}
+
+/// One uploaded chunk under the capture contract, keyed by (sessionId,
+/// seq) so retries are idempotent and late chunks land in order.
+model LiveChunk {
+  id            String      @id @default(uuid())
+
+  sessionId     String
+  session       LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  seq           Int
+  path          String
+  startOffsetMs Int
+  durationMs    Int
+  /// "stereo-mic-left" | "mono"
+  channelLayout String      @default("mono")
+  /// RECEIVED | PROCESSING | TRANSCRIBED | FAILED
+  status        String      @default("RECEIVED")
+  error         String?
+  segmentCount  Int         @default(0)
+  /// Response body replayed for duplicate uploads.
+  result        Json?
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([sessionId, seq])
 }
 
 /// Point-in-time summary generated while a live meeting runs.

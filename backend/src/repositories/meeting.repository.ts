@@ -25,6 +25,7 @@ export const create = (data: {
   userId: string;
   source?: string;
   platform?: string | null;
+  mode?: string;
 }) => prisma.meeting.create({ data });
 
 export const findAll = (): Promise<MeetingWithRelations[]> =>

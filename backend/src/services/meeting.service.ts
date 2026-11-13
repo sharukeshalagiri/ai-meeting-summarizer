@@ -1,3 +1,5 @@
+import fs from "fs/promises";
+import path from "path";
 import { logger } from "../lib/logger";
 import * as actionItemRepo from "../repositories/actionItem.repository";
 import * as meetingRepo from "../repositories/meeting.repository";
@@ -22,6 +24,7 @@ export const createMeeting = async (input: {
   userId?: string | null;
   source?: string;
   platform?: string | null;
+  mode?: string;
 }) => {
   // The MVP is single-user: fall back to the existing account so the
   // client does not have to hardcode an id.
@@ -39,6 +42,7 @@ export const createMeeting = async (input: {
     userId: ownerId,
     source: input.source ?? "UPLOAD",
     platform: input.platform ?? null,
+    ...(input.mode ? { mode: input.mode } : {}),
   });
 
   log.info("Meeting created", {
@@ -59,6 +63,32 @@ export const getMeeting = async (meetingId: string) => {
   }
 
   return meeting;
+};
+
+/**
+ * Absolute path of a meeting's stored recording, for streaming.
+ *
+ * Live meetings have no single recording (their audio is stored as
+ * chunks), so they 404 like a meeting with no upload.
+ */
+export const getAudioFile = async (meetingId: string): Promise<string> => {
+  const meeting = await getMeeting(meetingId);
+
+  if (!meeting.audioPath) {
+    throw NotFound("This meeting has no stored recording");
+  }
+
+  // audioPath is written by the server (multer), relative to the
+  // backend's working directory.
+  const absolutePath = path.resolve(meeting.audioPath);
+
+  try {
+    await fs.access(absolutePath);
+  } catch {
+    throw NotFound("The recording file is missing");
+  }
+
+  return absolutePath;
 };
 
 /** Throws unless the meeting exists; avoids loading relations. */

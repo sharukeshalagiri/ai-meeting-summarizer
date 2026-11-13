@@ -66,6 +66,32 @@ export const appendForMeeting = async (
   return result.count;
 };
 
+/**
+ * Inserts segments at explicit idx values (capture-contract chunks use
+ * seq * 1000 + i). Existing idx values are skipped rather than failing,
+ * so a retried chunk cannot duplicate segments.
+ */
+export const insertAtIdx = async (
+  meetingId: string,
+  segments: (DiarizedSegment & { idx: number })[]
+): Promise<number> => {
+  if (segments.length === 0) return 0;
+
+  const result = await prisma.transcriptSegment.createMany({
+    data: segments.map((segment) => ({
+      meetingId,
+      idx: segment.idx,
+      speaker: segment.speaker,
+      text: segment.text,
+      startMs: segment.startMs,
+      endMs: segment.endMs,
+    })),
+    skipDuplicates: true,
+  });
+
+  return result.count;
+};
+
 /** Most recent segments, used as context for a rolling summary. */
 export const findRecentByMeetingId = async (
   meetingId: string,

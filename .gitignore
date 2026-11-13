@@ -104,3 +104,9 @@ Thumbs.db
 **/.pytest_cache/
 coverage/
 .claude/settings.local.json
+
+
+# ================================
+# Claude Code worktrees (claude --worktree <track>)
+# ================================
+.claude/worktrees/

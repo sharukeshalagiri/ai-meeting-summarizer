@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { segmentElementId } from "../lib/audio/jumpToSegment";
+import { useAudioPlayer } from "../lib/audio/useAudioPlayer";
 import type { Segment } from "../types/meeting";
 
 interface Props {
@@ -18,6 +20,7 @@ interface Props {
  */
 function TranscriptView({ segments, fallback, focusMs }: Props) {
   const [query, setQuery] = useState("");
+  const { seekTo, hasAudio } = useAudioPlayer();
   const focusRef = useRef<HTMLDivElement>(null);
 
   const turns = useMemo(() => {
@@ -27,6 +30,8 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
       startMs: number;
       endMs: number;
       timestamp: string;
+      /** Kept so each segment renders its own id="seg-<idx>" anchor. */
+      parts: Segment[];
     }[] = [];
 
     for (const segment of segments) {
@@ -35,6 +40,7 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
       if (last && last.speaker === segment.speaker) {
         last.text = `${last.text} ${segment.text}`;
         last.endMs = segment.endMs;
+        last.parts.push(segment);
       } else {
         grouped.push({
           speaker: segment.speaker,
@@ -42,6 +48,7 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
           startMs: segment.startMs,
           endMs: segment.endMs,
           timestamp: segment.timestamp,
+          parts: [segment],
         });
       }
     }
@@ -130,10 +137,35 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
               >
                 <div className="turn-head">
                   <span className="speaker-chip">{turn.speaker}</span>
-                  <span className="turn-time">{turn.timestamp}</span>
+                  {hasAudio ? (
+                    <button
+                      type="button"
+                      className="turn-time turn-time-button"
+                      title="Play from here"
+                      onClick={() => seekTo(turn.startMs)}
+                    >
+                      {turn.timestamp}
+                    </button>
+                  ) : (
+                    <span className="turn-time">{turn.timestamp}</span>
+                  )}
                 </div>
 
-                <p className="turn-text">{turn.text}</p>
+                {/* UI contract: one anchor per segment, id="seg-<idx>"
+                    using TranscriptSegment.idx (sparse for live). */}
+                <p className="turn-text">
+                  {turn.parts.map((part, i) => (
+                    <span
+                      key={part.idx}
+                      id={segmentElementId(part.idx)}
+                      data-start-ms={part.startMs}
+                      className="seg"
+                    >
+                      {i > 0 ? " " : ""}
+                      {part.text}
+                    </span>
+                  ))}
+                </p>
               </div>
             );
           })

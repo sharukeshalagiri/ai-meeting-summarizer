@@ -16,11 +16,15 @@
     "dev:ai": "node scripts/ai-service.mjs dev",
     "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
     "lint": "npm --prefix frontend run lint",
-    "test": "npm run test:api && npm run test:ai",
+    "test": "npm run test:api && npm run test:ai && npm run test:scripts",
     "test:api": "npm --prefix backend test",
     "test:ai": "node scripts/ai-service.mjs test",
     "build": "npm --prefix backend run build && npm --prefix frontend run build",
-    "check": "npm run typecheck && npm run lint && npm test && npm --prefix frontend run build"
+    "check": "npm run typecheck && npm run lint && npm test && npm --prefix frontend run build && npm run check:ownership",
+    "setup:light": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "worktree:env": "node scripts/worktree-env.mjs",
+    "check:ownership": "node scripts/check-ownership.mjs",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\""
   },
   "devDependencies": {
     "concurrently": "^10.0.7"

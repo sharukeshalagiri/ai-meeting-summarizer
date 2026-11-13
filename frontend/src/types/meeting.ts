@@ -109,6 +109,15 @@ export interface Meeting {
   endedAt: string | null;
   createdAt: string;
 
+  /** Server-side path of the stored recording; null for live captures. */
+  audioPath?: string | null;
+  /** GENERAL | LECTURE | INTERVIEW | PROJECT | ONE_ON_ONE | AUTO */
+  mode?: string;
+  /** Background-job progress (Wave 3); null until a job reports. */
+  processingStage?: string | null;
+  processingProgress?: number | null;
+  processingError?: string | null;
+
   transcript?: Transcript | null;
   summary?: Summary | null;
   actionItems?: ActionItemRecord[];

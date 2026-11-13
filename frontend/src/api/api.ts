@@ -9,8 +9,16 @@ import type { ApiResponse } from "../types/api";
 export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
 
+/**
+ * Device token for /api/live (see backend deviceAuth.middleware.ts).
+ * Optional: a development backend without DEVICE_TOKEN accepts requests
+ * without it. Note that a VITE_ variable is visible in the built bundle.
+ */
+const DEVICE_TOKEN = import.meta.env.VITE_DEVICE_TOKEN as string | undefined;
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  headers: DEVICE_TOKEN ? { Authorization: `Bearer ${DEVICE_TOKEN}` } : {},
 });
 
 /**

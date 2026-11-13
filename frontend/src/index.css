@@ -1117,6 +1117,30 @@ legend {
   line-height: 1.65;
 }
 
+/* UI contract: per-segment anchors (id="seg-<idx>") and playback. */
+.seg {
+  border-radius: 3px;
+  transition: background 0.3s;
+}
+
+.seg.seg-highlight {
+  background: var(--accent-soft);
+}
+
+.turn-time-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.audio-player {
+  display: block;
+  width: 100%;
+  margin: 12px 0 16px;
+}
+
 /* =========================================================
    Live capture
    ========================================================= */

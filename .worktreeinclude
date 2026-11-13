@@ -1,0 +1,6 @@
+# Gitignored files Claude Code copies from the main checkout into each new
+# worktree (claude --worktree <track>). `npm run worktree:env <track>`
+# then rewrites ports and DATABASE_URL for the track.
+backend/.env
+frontend/.env
+ai-service/.env
