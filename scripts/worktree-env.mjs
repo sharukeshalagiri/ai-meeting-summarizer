@@ -70,10 +70,13 @@ const ownAi = ownsAiService(track);
 const dbName = databaseNameFor(trackName);
 
 /** Minimal .env reader/writer that keeps comments and order. */
-const readEnv = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null);
+// Normalized to LF: checkouts with core.autocrlf have CRLF files.
+const readEnv = (file) =>
+  fs.existsSync(file) ? fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n") : null;
 
+// [ \t] rather than \s throughout, so a match never spans lines.
 const parseValue = (text, key) => {
-  const m = new RegExp(`^\\s*${key}\\s*=\\s*(.*)$`, "m").exec(text ?? "");
+  const m = new RegExp(`^[ \\t]*${key}[ \\t]*=[ \\t]*(.*)$`, "m").exec(text ?? "");
   return m ? m[1].trim().replace(/^["']|["']$/g, "") : undefined;
 };
 
@@ -82,7 +85,7 @@ const setKeys = (text, values) => {
   for (const [key, value] of Object.entries(values)) {
     const line = `${key}=${value}`;
     // Replace an active or commented-out assignment, else append.
-    const re = new RegExp(`^\\s*#?\\s*${key}\\s*=.*$`, "m");
+    const re = new RegExp(`^[ \\t]*#?[ \\t]*${key}[ \\t]*=.*$`, "m");
     out = re.test(out) ? out.replace(re, line) : `${out}${line}\n`;
   }
   return out;
