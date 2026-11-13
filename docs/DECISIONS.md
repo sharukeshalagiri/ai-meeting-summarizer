@@ -163,3 +163,53 @@ embeddings.
 Whisper emits filler over silence — "Thank you.", "Bye." — with a high
 `no_speech_prob`. Those are dropped above a threshold (0.75) so they
 do not pollute summaries or surface as search results.
+
+## Capture contract: idempotent on (sessionId, seq), sparse segment idx
+
+**Constraint:** four recorders (extension, desktop, web, bot) on flaky
+networks must be able to retry and upload out of order without
+duplicating or scrambling the transcript.
+
+- A `LiveChunk` row is **claimed** on `@@unique([sessionId, seq])` before
+  any work, so the database (not application locks) decides which of two
+  concurrent uploads processes a chunk. The loser gets **409**, meaning
+  "still processing, retry later". A transcribed chunk replays its stored
+  response with `duplicate: true`, and a failed one is re-claimed.
+- Segment timestamps come from the client's `startOffsetMs`, not from
+  arrival order. Segment idx is `seq * 1000 + i`.
+
+**Why sparse idx instead of renumbering:** renumbering a meeting's
+segments every time a late chunk arrives would break every reference
+already handed out (citations, `seg-<idx>` anchors, evidence). Sparse
+idx is stable from the moment a segment is written, keeps ordering by seq,
+and makes a retried chunk collide on the existing unique `(meetingId,
+idx)` index instead of duplicating. The cost: idx is no longer a
+position. Everything must refer to segments by idx (see
+docs/SCHEMA_NOTES.md), and `seq` is capped at 2 147 482 to stay inside a
+32-bit Int.
+
+The legacy web page keeps its old path (no `seq`) so it doesn't break
+until w1-ext moves it over.
+
+## Device token instead of user auth, for now
+
+Recorders need some authentication before user accounts exist. A single
+shared `DEVICE_TOKEN`, checked in one middleware with a constant-time
+compare, is enough for a personal deployment and is trivial for each
+recorder to send. It is optional in development, so the web page works
+with zero setup (a warning is logged), and required in production, where
+the backend refuses to boot without it. When real auth lands, the same
+middleware is the single place to swap.
+
+## Parallel tracks: ownership file, port slots, shared ai-service
+
+- `docs/OWNERSHIP.md` holds one machine-readable block that both
+  `check-ownership.mjs` and `worktree-env.mjs` parse, so the rules and the
+  documentation cannot drift apart.
+- Ports come from a fixed per-track **slot** (`5100 + 10*slot`), not from
+  the order tracks were started. A track's ports are therefore stable
+  across machines and re-runs.
+- Only tracks that own ai-service code run their own Whisper. Installing
+  torch in every worktree costs gigabytes and minutes for no benefit.
+- Prisma changes are allowed only on `schema/` branches, because two
+  parallel migrations are the one conflict a rebase cannot fix safely.

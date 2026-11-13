@@ -18,11 +18,43 @@ jobs, tests, CI, measured accuracy).
   decisions, dates, open questions, plus mode-specific output for
   lectures, interviews, projects and 1:1s.
 - **Trace.** Every summary item links back to the moment it was said
-  (segment `startMs`).
+  (a segment `idx`, played from its `startMs`).
 
-The current code is a working prototype of upload and browser-tab capture.
-Stereo channel separation, the desktop recorder, auth, jobs, CI and
-evaluation do not exist yet.
+The current code is a working prototype of upload and browser-tab capture,
+plus the shared foundation for parallel work: the capture contract, the
+reserved schema, the UI contract, ownership rules and CI. Stereo channel
+separation, the desktop recorder, auth, background jobs and evaluation do
+not exist yet. They are the waves' work.
+
+## Operating mode (every session follows this)
+
+**Roles.** The user is the engineer and makes the decisions. You are the
+developer, architect, tester and release manager. **You run every git,
+gh, npm, pip, docker and test command yourself. Never ask the user to run
+a command you can run.**
+
+**Decision gates: the ONLY times you stop and ask.**
+
+- **(a)** Approval of your plan, before you write code.
+- **(b)** Merging any PR, or pushing to `main`.
+- **(c)** Schema or migration changes (`backend/prisma/**`).
+- **(d)** Deleting files, branches, worktrees, databases or data.
+- **(e)** Anything involving accounts, API keys, costs, public releases,
+  GitHub settings, or other people's data.
+- **(f)** A real-world test only the user can do: a live Meet/Zoom call,
+  installing the browser extension, granting a desktop OS permission.
+  Give them a script that takes 2 minutes or less, then wait for their
+  result.
+
+**How to ask.** Lead with the decision. Give 2–3 options with their
+consequences and mark your recommendation. Keep it under 10 lines.
+
+**Everything else: just do it,** then report at the end in 5 lines or
+fewer: what changed, what was tested, and what needs the user's
+decision.
+
+`.claude/settings.json` enforces these gates mechanically (see
+[Permissions](#permissions-claudesettingsjson-committed)).
 
 ## Architecture
 
@@ -60,23 +92,67 @@ NewMeeting.tsx
 **The ai-service reads the file by path**, so it must share a filesystem
 with the backend.
 
-### Live capture flow
+### Live capture flow (capture contract)
+
+Every recorder (extension, desktop recorder, web page, bot) uses the
+**capture contract** in [`docs/CAPTURE_CONTRACT.md`](docs/CAPTURE_CONTRACT.md)
+(types in `backend/src/types/capture.ts`):
 
 ```
-Browser tab (useLiveCapture.ts: getDisplayMedia)  or  extension (tabCapture + offscreen doc)
-  POST /api/live/sessions                       Meeting(source LIVE) + LiveSession
-  every CHUNK_MS (20 s): POST /api/live/sessions/:id/chunks  (multipart "chunk", durationMs)
-        Whisper with offset_ms = session elapsedMs -> diarize -> append segments
-        rolling summary every ROLLING_SUMMARY_MINUTES (best effort)
-        chunk file deleted after transcription
-  POST /api/live/sessions/:id/end               final summary
+Recorder (stereo: left = my mic, right = everyone else)
+  Authorization: Bearer <DEVICE_TOKEN>      one middleware: middleware/deviceAuth.middleware.ts
+  POST /api/live/sessions {title, platform, source, mode, hints[]} -> {sessionId, meetingId}
+  POST /api/live/sessions/:id/chunks  multipart: audio, seq, startOffsetMs, durationMs, channelLayout
+        LiveChunk row claimed on (sessionId, seq): idempotent
+          duplicate of a transcribed seq -> 200 {duplicate:true} (replayed)
+          same seq still processing      -> 409 (retry later with backoff; not a failure)
+          failed seq                     -> processed again
+        Whisper with offset = startOffsetMs -> diarize -> segments at idx = seq*1000 + i
+        session.elapsedMs = max(elapsedMs, startOffsetMs + durationMs)
+        rolling summary every ROLLING_SUMMARY_MINUTES (best effort); chunk file kept
+  POST /api/live/sessions/:id/roster {participants[]}   -> LiveSession.roster (name hints)
+  POST /api/live/sessions/:id/end                       final transcript + summary
   reapStaleSessions (every 5 min) ends sessions idle > LIVE_SESSION_IDLE_MINUTES
 ```
+
+The current web page (`useLiveCapture.ts`) still uses the **legacy** form
+of the chunk call: a `chunk` field with no `seq`. That path appends in
+arrival order, takes offsets from the session clock and deletes the file.
+It keeps working, but new recorders must use the contract.
+
+Playback: `GET /api/meetings/:id/audio` streams the stored recording with
+HTTP Range support (`res.sendFile`). There is no owner check until auth
+exists. Live meetings have no single recording, so it returns 404 for
+them.
 
 Search and Q&A: `GET /api/search` and `POST /api/chat` embed the query and
 run cosine similarity in SQL over `SegmentEmbedding`. Analytics:
 `GET /api/analytics`. Tasks: `GET/PATCH /api/action-items`. Every route
 is assembled in `backend/src/routes/index.ts`.
+
+### Shared contracts (stable; build on them, don't redesign them)
+
+- **Segment references are always `TranscriptSegment.idx`, never array
+  positions.** This applies to summary evidence, chat citations,
+  corrections and `jumpToSegment`. Live idx values are sparse
+  (`seq * 1000 + i`). See [`docs/SCHEMA_NOTES.md`](docs/SCHEMA_NOTES.md).
+- **Schema reservation:** the `parallel_foundation` migration added every
+  field Waves 1–3 need: `Meeting.mode` and `processing*`;
+  `TranscriptSegment.channel`, `noiseLabel`, `words` and `speakerId`;
+  `SpeakerProfile`; `Correction` (write it through
+  `repositories/correction.repository.ts` `record()`); the extra
+  `ActionItem` fields; `LiveSession.source`, `hints` and `roster`; and
+  `LiveChunk`. `docs/SCHEMA_NOTES.md` explains every field and who fills
+  it.
+- **UI contract:** `TranscriptView` renders every segment as
+  `<span id="seg-<idx>" data-start-ms=…>`. `frontend/src/lib/audio/`
+  provides `AudioPlayerProvider` (on `MeetingDetails`), `<AudioPlayer>`
+  (registers the `<audio>`), `useAudioPlayer()` →
+  `{ seekTo(ms), jumpToSegment(idx), hasAudio }`, and the DOM helper
+  `scrollToSegment(idx)`. `jumpToSegment` switches to the transcript tab,
+  scrolls, highlights and plays from the segment's start.
+- **Provider types** (no implementations yet): `TranscriptionProvider` and
+  `DiarizationProvider` in `backend/src/types/providers.ts`.
 
 The reasons behind these choices (chunked Whisper instead of streaming,
 text-based diarization, `float8[]` instead of pgvector, embedding
@@ -91,7 +167,8 @@ them, and add an entry when you make a decision like these.
 mention an `EXTENSION.md` that doesn't exist either. The API base is
 hard-coded to `http://localhost:5000/api` (it can be overridden through
 `chrome.storage.local.apiBase`), and `host_permissions` hard-codes
-`localhost:5000`. The extension cannot be loaded yet.
+`localhost:5000`. The extension cannot be loaded yet. It still posts the
+legacy chunk form; moving it to the capture contract is w1-ext's job.
 
 ## Setup and commands
 
@@ -116,13 +193,21 @@ npm run db:down
 # verify (run before calling anything done)
 npm run typecheck             # backend tsc (src + test) and frontend tsc -b
 npm run lint                  # frontend eslint
-npm test                      # backend vitest + ai-service pytest
+npm test                      # backend vitest + ai-service pytest + scripts (node --test)
+npm run check:ownership       # changed files vs docs/OWNERSHIP.md (track branches)
 npm run check                 # all of the above + frontend build
+
+# parallel tracks
+npm run worktree:env <track>  # ports, env files, database, install, migrate for a track worktree
+npm run setup:light           # Node packages only (no Python / torch)
 ```
 
 Per service: `npm --prefix backend run dev|test|typecheck|migrate|generate`,
 `npm --prefix frontend run dev|build|lint|typecheck`,
 `node scripts/ai-service.mjs dev|test|install|install:test`.
+Install with `cd <pkg> && npm install`, never `npm --prefix <pkg> install`.
+Run from a directory that has its own `package.json`, the `--prefix` form
+adds the root package as a `file:..` dependency.
 
 - The backend runs without the ai-service: everything except
   transcription works, and `/transcribe` returns a 502 with "Could not
@@ -163,32 +248,84 @@ fails at boot):
 | `TRANSCRIPTION_TIMEOUT_MINUTES` | 15 | |
 | `ROLLING_SUMMARY_MINUTES` | 7 | |
 | `LIVE_SESSION_IDLE_MINUTES` | 10 | |
+| `DEVICE_TOKEN` | unset | Bearer token for `/api/live`. Unset in development: allowed, with a warning. **Required in production**, or the backend refuses to boot. |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
 precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (base).
 
-**`frontend/.env.local`**: `VITE_API_URL` (http://localhost:5000/api),
-`FRONTEND_PORT` (5173, read by `vite.config.ts`).
+**`frontend/.env.local`** (main checkout) or **`frontend/.env`** (written
+by `worktree:env`): `VITE_API_URL` (http://localhost:5000/api),
+`FRONTEND_PORT` (5173, read by `vite.config.ts`), and `VITE_DEVICE_TOKEN`
+(sent as the Bearer token if set; it is visible in the bundle).
 
 ### Parallel worktrees
 
-Several Claude Code sessions run at the same time in `git worktree`s, and
-each one ends in a PR. To keep them from colliding:
+Several Claude Code sessions run at the same time, each in its own
+worktree (`claude --worktree <track>` → `.claude/worktrees/<track>`,
+branch `worktree-<track>`), and each ends in one PR. **Every track follows
+[`docs/PARALLEL.md`](docs/PARALLEL.md)** (rules and the finish protocol)
+and may only change what [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) gives
+it.
 
-- **One shared Postgres container.** `docker-compose.yml` has a fixed
-  `name:`, so `npm run db:up` from any worktree reuses the same container.
-  Isolate data by **database name** in each worktree's `DATABASE_URL`
-  (e.g. `.../ai_meeting_summarizer_feat_auth`). `npm run db:migrate`
-  (`prisma migrate deploy`) creates the database if it does not exist
-  (verified against the compose container).
-- **Different ports per worktree.** Set `PORT`, `AI_SERVICE_PORT` and
-  `FRONTEND_PORT`, and point `AI_SERVICE_URL` and `VITE_API_URL` at them.
-- Each worktree needs its own `npm run setup`, because `node_modules` and
-  `.venv` are not shared. Copy the `.env` files in by hand; they are
-  gitignored.
+- **Start with `npm run worktree:env <track>`.** The track's slot in
+  OWNERSHIP.md gives it ports (`base = 5100 + 10*slot`: backend `base`,
+  frontend `base+1`, ai-service `base+2`). The script writes
+  `backend/.env`, `frontend/.env` and `ai-service/.env` from the main
+  checkout's env files with those ports and the database
+  `ai_meeting_summarizer_<track>`, installs dependencies, then starts
+  Postgres and migrates. `.worktreeinclude` copies the main checkout's
+  `.env` files into new worktrees first.
+- **Shared ai-service:** only tracks that own `ai-service/` files (w1-asr,
+  w2-spk) run their own. The rest use the main checkout's on `:8000` and
+  install with `setup:light` (no torch).
+- **One shared Postgres container** (`docker-compose.yml` has a fixed
+  `name:`), with one database per track. `prisma migrate deploy` creates a
+  missing database (verified).
+- `npm run check:ownership` and the CI `ownership` job fail a track PR
+  that changes files outside its ownership, or any Prisma schema or
+  migration (those belong on a `schema/<name>` branch).
 - No absolute paths in code or scripts. Resolve paths relative to the
-  file (see `scripts/ai-service.mjs`) or to the service's working
-  directory.
+  file (see `scripts/*.mjs`) or to the service's working directory.
+
+### Permissions (`.claude/settings.json`, committed)
+
+These rules make the decision gates mechanical. Order is **deny, then ask,
+then allow**: the first match wins, and a chained command (`&&`, `|`,
+`;`) needs every part allowed.
+
+- **Allowed without asking:**
+  - read-only git
+  - `git add`, `commit`, `switch`, `checkout -b`, `rebase origin/main`,
+    `pull --ff-only`
+  - read-only `gh pr` / `gh run`, and `gh pr create`
+  - npm/npx test, lint, typecheck, build, install, dev and setup
+  - `worktree:env`, `db:up`
+  - `pip install`, `pytest`
+  - `docker compose up`, `ps`, `logs`, `exec` and `config`
+- **Ask:**
+  - `git push`, `gh pr merge`, `gh api`, and `gh repo`, `release`,
+    `secret` and `label` changes
+  - `prisma migrate` / `db`, `db:migrate`
+  - `docker compose down`, `docker volume` / `rm`, `dropdb`
+  - `rm`, `rmdir`, `Remove-Item`
+  - `git branch -d/-D`, `git worktree remove`, `git reset`, `restore`,
+    `clean`
+- **Denied:**
+  - force-push in any form, including `+refspec` and
+    `--force-with-lease`
+  - any push to `main`, `git reset --hard`, deleting `main`
+  - reading `.env` files (`Read(**/.env)` and `.env.local`), plus
+    `cat`, `head`, `tail`, `grep`, `Get-Content` and `printenv` patterns
+    for them
+
+There are matching `PowerShell(...)` rules, because Bash rules don't
+cover the PowerShell tool on Windows. **Caveat:** the shell rules for
+`.env` are best-effort, since a command can be phrased in ways no pattern
+predicts. Sandbox `denyRead`, which would enforce it, isn't available
+here. Treat "never print `.env`" as a hard rule regardless. The
+`worktree:env` script reads and writes `.env` files itself, which is
+intended. Personal overrides go in `.claude/settings.local.json`
+(gitignored).
 
 ## Code conventions (follow what is already there)
 
@@ -240,18 +377,30 @@ the table above.
 **Frontend:** pages live in `src/pages`, data fetching goes through
 `src/api/api.ts` (`getData`, `postData`, `getErrorMessage`) and
 `hooks/useFetch.ts`, and live capture is in `hooks/useLiveCapture.ts`.
-Styling uses Tailwind 4. Keep `npm run lint` clean.
+Styling uses Tailwind 4. Keep `npm run lint` clean. Because of
+react-refresh, a `.tsx` file exports only components; put contexts and
+hooks in their own `.ts` files (see `lib/audio/`).
+
+**Segments:** refer to segments by `TranscriptSegment.idx` everywhere,
+never by array position (see Shared contracts).
 
 **Comments:** the codebase explains *why* in doc comments above
 non-obvious code. Keep doing that.
 
 ## Tests and fixtures
 
-- `backend/test/*.test.ts` (vitest). `vitest.config.mts` supplies
-  placeholder `DATABASE_URL` and `GEMINI_API_KEY`, so modules that import
-  `lib/env.ts` load without a real `.env`. Unit tests must not hit the
-  network or the database. Export pure helpers (like `parseSegments`) so
-  they can be tested without the network or the database.
+- Backend tests use vitest. They live in `backend/test/**/*.test.ts` or
+  next to the code as `src/**/*.test.ts` (excluded from the build).
+  `vitest.config.mts` supplies placeholder `DATABASE_URL` and
+  `GEMINI_API_KEY`, sends uploads to a temp dir and leaves `DEVICE_TOKEN`
+  unset, so modules that import `lib/env.ts` load without a real `.env`.
+  Unit tests must not hit the network or the database. Export pure
+  helpers (like `parseSegments`) so they can be tested without either.
+- Route-level tests use supertest on `createApp()`, with repositories and
+  upstream services replaced by `vi.mock`. See `test/captureContract.test.ts`
+  and its in-memory fakes in `test/helpers/liveFakes.ts`.
+- `scripts/**/*.test.mjs` use `node --test` (`npm run test:scripts`), for
+  example the ownership glob rules.
 - `ai-service/tests/` (pytest) installs a fake `whisper` module, and the
   model is loaded lazily (`get_model()`), so `/health` never loads it.
 - `fixtures/transcripts/`: synthetic transcripts
@@ -263,16 +412,19 @@ non-obvious code. Keep doing that.
 
 ## Rules
 
-1. **Plan first, then wait for approval** before writing code, unless the
-   user explicitly says to go ahead.
-2. **Never commit secrets, `.env` files or recordings.** That includes
-   API keys, real `DATABASE_URL`s, anything under `uploads/` or
-   `recordings/`, and audio or video files. Fixtures stay synthetic.
-3. **Before calling anything done, run `npm run typecheck` and `npm test`**
-   (and `npm run lint` plus a frontend build if the frontend changed).
-   `npm run check` runs all of them. Report failures honestly.
-4. Each task gets its own branch and ends in a PR. Don't push to `main`
-   and don't merge your own PR.
+1. **Plan first, then wait for approval** before writing code (gate a).
+2. **Never commit secrets, `.env` files, recordings or real
+   transcripts.** That includes API keys, real `DATABASE_URL`s, anything
+   under `uploads/` or `recordings/`, and audio or video files. The repo is
+   public, so fixtures stay synthetic.
+3. **Before calling anything done, run typecheck and tests** for what you
+   touched (`npm run check` runs everything). Report failures honestly,
+   with the output.
+4. Each task gets its own branch and ends in a PR. Never push to `main`,
+   never force-push, never merge your own PR.
 5. Keep things worktree-friendly: ports and the database name come from
    env, and paths are relative.
 6. Record non-obvious engineering choices in `docs/DECISIONS.md`.
+   Parallel tracks write `docs/decisions/<track>.md` instead.
+7. **`CLAUDE.md` and `docs/DECISIONS.md` are frozen while the waves run.**
+   Only the integrator session changes them, after the engineer approves.

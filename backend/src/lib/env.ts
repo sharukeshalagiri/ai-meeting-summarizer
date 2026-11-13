@@ -43,9 +43,32 @@ const asNumber = (name: string, fallback: number): number => {
   return parsed;
 };
 
+const isProduction = process.env.NODE_ENV === "production";
+
+/**
+ * Shared secret recorders (extension, desktop app, bot) send as
+ * `Authorization: Bearer <token>` on /api/live. Optional in development
+ * so the web page works without setup; production refuses to boot
+ * without it. See middleware/deviceAuth.middleware.ts.
+ */
+const deviceToken = (): string | null => {
+  const value = process.env.DEVICE_TOKEN?.trim();
+
+  if (value) return value;
+
+  if (isProduction) {
+    throw new Error(
+      "Missing required environment variable: DEVICE_TOKEN. " +
+        "It is required when NODE_ENV=production."
+    );
+  }
+
+  return null;
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
-  isProduction: process.env.NODE_ENV === "production",
+  isProduction,
 
   port: asNumber("PORT", 5000),
 
@@ -89,6 +112,9 @@ export const env = {
    * is gone.
    */
   liveSessionIdleMs: asNumber("LIVE_SESSION_IDLE_MINUTES", 10) * 60 * 1000,
+
+  /** Null means device auth is off (development only). */
+  deviceToken: deviceToken(),
 } as const;
 
 export type Env = typeof env;

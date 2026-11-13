@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { getErrorMessage, postData } from "../api/api";
+import { API_BASE_URL, getErrorMessage, postData } from "../api/api";
 import ErrorState from "../components/ErrorState";
 import { Skeleton } from "../components/Skeleton";
 import StatusBadge from "../components/StatusBadge";
 import SummaryView from "../components/SummaryView";
 import TranscriptView from "../components/TranscriptView";
 import { useFetch } from "../hooks/useFetch";
+import { AudioPlayer } from "../lib/audio/AudioPlayer";
+import { AudioPlayerProvider } from "../lib/audio/AudioPlayerProvider";
 import type {
   Meeting,
   Segment,
@@ -44,6 +46,13 @@ function MeetingDetails() {
     focusMs != null ? "transcript" : "summary"
   );
   const [retryError, setRetryError] = useState<string | null>(null);
+
+  // jumpToSegment(idx) can seek from any tab, then shows the transcript.
+  const segmentStarts = useMemo(
+    () => new Map((segments ?? []).map((s) => [s.idx, s.startMs])),
+    [segments]
+  );
+  const showTranscript = useCallback(() => setTab("transcript"), []);
   const [retrying, setRetrying] = useState<string | null>(null);
 
   /** Lets the user recover a meeting whose pipeline failed midway. */
@@ -107,6 +116,10 @@ function MeetingDetails() {
   const duration = formatDuration(meeting.durationSec);
 
   return (
+    <AudioPlayerProvider
+      segmentStarts={segmentStarts}
+      onJump={showTranscript}
+    >
     <div className="page">
       <p>
         <Link to="/" className="back-link">
@@ -142,6 +155,10 @@ function MeetingDetails() {
 
       {meeting.description && (
         <p className="description">{meeting.description}</p>
+      )}
+
+      {meeting.audioPath && (
+        <AudioPlayer src={`${API_BASE_URL}/meetings/${meeting.id}/audio`} />
       )}
 
       {retryError && (
@@ -236,6 +253,7 @@ function MeetingDetails() {
         </div>
       )}
     </div>
+    </AudioPlayerProvider>
   );
 }
 

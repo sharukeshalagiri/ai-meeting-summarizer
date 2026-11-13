@@ -46,6 +46,31 @@ export const getMeetingById = asyncHandler(
   }
 );
 
+/**
+ * Streams the stored recording. res.sendFile handles HTTP Range (206
+ * partial content), which the <audio> element needs to seek.
+ * TODO(auth): check the meeting belongs to the requester.
+ */
+export const getMeetingAudio = asyncHandler(
+  async (req: Request, res: Response) => {
+    const filePath = await meetingService.getAudioFile(
+      requireParam(req.params.id, "meeting id")
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      res.sendFile(
+        filePath,
+        { acceptRanges: true, cacheControl: false },
+        (error) => {
+          // A client aborting mid-stream (seeking) is normal.
+          if (error && !res.headersSent) reject(error);
+          else resolve();
+        }
+      );
+    });
+  }
+);
+
 export const getMeetingTranscript = asyncHandler(
   async (req: Request, res: Response) => {
     const transcript = await transcriptService.getTranscriptByMeeting(

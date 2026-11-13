@@ -14,7 +14,32 @@ export type LiveSessionWithRolling = Prisma.LiveSessionGetPayload<{
 export const create = (data: {
   meetingId: string;
   platform: string | null;
+  source?: string | null;
+  hints?: string[];
 }) => prisma.liveSession.create({ data });
+
+/** Replaces the participant names the recorder reported. */
+export const setRoster = (id: string, roster: string[]) =>
+  prisma.liveSession.update({
+    where: { id },
+    data: { roster },
+  });
+
+/**
+ * Records a capture-contract chunk. Chunks can arrive out of order, so
+ * elapsedMs only ever moves forward to the furthest chunk end seen,
+ * using GREATEST in one statement so concurrent chunks cannot regress it.
+ */
+export const recordContractChunk = async (id: string, endMs: number) => {
+  await prisma.$executeRaw`
+    UPDATE "LiveSession"
+    SET "chunkCount" = "chunkCount" + 1,
+        "elapsedMs" = GREATEST("elapsedMs", ${Math.round(endMs)}),
+        "lastChunkAt" = NOW()
+    WHERE "id" = ${id}`;
+
+  return prisma.liveSession.findUniqueOrThrow({ where: { id } });
+};
 
 export const findById = (id: string) =>
   prisma.liveSession.findUnique({ where: { id } });

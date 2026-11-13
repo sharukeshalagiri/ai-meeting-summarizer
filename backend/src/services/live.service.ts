@@ -1,11 +1,20 @@
 import fs from "fs/promises";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
+import { Prisma } from "@prisma/client";
+import * as chunkRepo from "../repositories/liveChunk.repository";
 import * as liveRepo from "../repositories/liveSession.repository";
 import * as meetingRepo from "../repositories/meeting.repository";
 import * as segmentRepo from "../repositories/segment.repository";
 import * as transcriptRepo from "../repositories/transcript.repository";
-import { BadRequest, NotFound } from "../types/errors";
+import {
+  SEGMENTS_PER_CHUNK,
+  segmentIdxFor,
+  type CaptureSource,
+  type ChannelLayout,
+  type MeetingMode,
+} from "../types/capture";
+import { AppError, BadRequest, NotFound } from "../types/errors";
 import { MeetingStatus } from "../types/meeting";
 import { toSpeakerTranscript } from "../types/segment";
 import { toRollingJsonValue } from "../types/summary";
@@ -34,6 +43,10 @@ export const startSession = async (input: {
   title: string;
   platform: string | null;
   userId?: string | null;
+  /** Capture-contract fields; absent for the legacy web page. */
+  source?: CaptureSource | null;
+  mode?: MeetingMode | null;
+  hints?: string[];
 }) => {
   const created = await meetingService.createMeeting({
     title: input.title,
@@ -41,6 +54,7 @@ export const startSession = async (input: {
     userId: input.userId ?? null,
     source: "LIVE",
     platform: input.platform,
+    mode: input.mode ?? undefined,
   });
 
   // Returned rather than the pre-update row, so the client sees the
@@ -50,6 +64,8 @@ export const startSession = async (input: {
   const session = await liveRepo.create({
     meetingId: meeting.id,
     platform: input.platform,
+    source: input.source ?? null,
+    hints: input.hints ?? [],
   });
 
   log.info("Live session started", {
@@ -58,7 +74,9 @@ export const startSession = async (input: {
     platform: input.platform,
   });
 
-  return { meeting, session };
+  // sessionId/meetingId are the capture contract's response; meeting
+  // and session stay for the existing web page.
+  return { sessionId: session.id, meetingId: meeting.id, meeting, session };
 };
 
 const getActiveSession = async (sessionId: string) => {
@@ -190,6 +208,183 @@ export const ingestChunk = async (input: {
       // A leftover temp file is not worth failing the request over.
     });
   }
+};
+
+const removeFile = (filePath: string) =>
+  fs.rm(filePath, { force: true }).catch(() => {
+    // A leftover file is not worth failing the request over.
+  });
+
+/** Thrown while another upload of the same chunk is being processed. */
+const stillProcessing = () =>
+  new AppError(
+    "This chunk is still being processed. Retry later with backoff.",
+    409
+  );
+
+/**
+ * Accepts one chunk under the capture contract (docs/CAPTURE_CONTRACT.md).
+ *
+ * Idempotent on (sessionId, seq): a repeat of a transcribed chunk
+ * replays the stored response with `duplicate: true`; a repeat while
+ * the first upload is still processing gets 409; a repeat of a failed
+ * chunk retries it. Timestamps come from the client's startOffsetMs and
+ * segment idx from seq, so chunks may arrive in any order.
+ *
+ * The chunk file is kept (LiveChunk.path) for later re-processing,
+ * unlike the legacy path, which deletes it.
+ */
+export const ingestContractChunk = async (input: {
+  sessionId: string;
+  filePath: string;
+  seq: number;
+  startOffsetMs: number;
+  durationMs: number;
+  channelLayout: ChannelLayout;
+}) => {
+  const session = await getActiveSession(input.sessionId);
+
+  const existing = await chunkRepo.findBySeq(session.id, input.seq);
+
+  if (existing?.status === "TRANSCRIBED") {
+    await removeFile(input.filePath);
+    return replay(existing.result);
+  }
+
+  if (session.status !== "ACTIVE") {
+    await removeFile(input.filePath);
+    throw new AppError("This live session has already ended.", 410);
+  }
+
+  const fields = {
+    path: input.filePath,
+    startOffsetMs: input.startOffsetMs,
+    durationMs: input.durationMs,
+    channelLayout: input.channelLayout,
+  };
+
+  let chunkId: string;
+
+  if (!existing) {
+    const claimed = await chunkRepo.claim({
+      sessionId: session.id,
+      seq: input.seq,
+      ...fields,
+    });
+
+    if (!claimed) {
+      // Lost a race with a concurrent upload of the same seq.
+      await removeFile(input.filePath);
+      throw stillProcessing();
+    }
+
+    chunkId = claimed.id;
+  } else if (
+    existing.status === "FAILED" &&
+    (await chunkRepo.reclaimFailed(existing.id, fields))
+  ) {
+    chunkId = existing.id;
+    if (existing.path !== input.filePath) await removeFile(existing.path);
+  } else {
+    await removeFile(input.filePath);
+    throw stillProcessing();
+  }
+
+  try {
+    const result = await transcribeAudioDetailed(
+      input.filePath,
+      input.startOffsetMs
+    );
+
+    let diarized = result.segments.length
+      ? await diarizeSegments(result.segments)
+      : [];
+
+    if (diarized.length > SEGMENTS_PER_CHUNK) {
+      log.warn("Chunk produced too many segments; truncating", {
+        sessionId: session.id,
+        seq: input.seq,
+        segments: diarized.length,
+      });
+      diarized = diarized.slice(0, SEGMENTS_PER_CHUNK);
+    }
+
+    const segments = diarized.map((segment, position) => ({
+      ...segment,
+      idx: segmentIdxFor(input.seq, position),
+    }));
+
+    await segmentRepo.insertAtIdx(session.meetingId, segments);
+
+    const updated = await liveRepo.recordContractChunk(
+      session.id,
+      input.startOffsetMs + input.durationMs
+    );
+
+    const summarized = await maybeRollingSummary(
+      {
+        id: session.id,
+        meetingId: session.meetingId,
+        lastRollingAtMs: session.lastRollingAtMs,
+      },
+      updated.elapsedMs
+    );
+
+    const response = {
+      sessionId: session.id,
+      meetingId: session.meetingId,
+      seq: input.seq,
+      elapsedMs: updated.elapsedMs,
+      chunkCount: updated.chunkCount,
+      segments,
+      rollingSummaryGenerated: summarized,
+      duplicate: false,
+    };
+
+    await chunkRepo.markTranscribed(
+      chunkId,
+      segments.length,
+      response as unknown as Prisma.InputJsonObject
+    );
+
+    log.debug("Contract chunk ingested", {
+      sessionId: session.id,
+      seq: input.seq,
+      segments: segments.length,
+    });
+
+    return response;
+  } catch (error) {
+    await chunkRepo
+      .markFailed(
+        chunkId,
+        error instanceof Error ? error.message : String(error)
+      )
+      .catch((markError) =>
+        log.error("Could not mark chunk failed", markError, {
+          chunkId,
+        })
+      );
+
+    throw error;
+  }
+};
+
+const replay = (stored: Prisma.JsonValue | null) => ({
+  ...((stored as Record<string, unknown> | null) ?? {}),
+  duplicate: true,
+});
+
+/**
+ * Stores the participant names a recorder sees (e.g. the Meet roster).
+ * They are name hints for diarization, not speaker rows.
+ */
+export const setRoster = async (sessionId: string, participants: string[]) => {
+  const session = await getActiveSession(sessionId);
+
+  const updated = await liveRepo.setRoster(session.id, participants);
+
+  return { sessionId: updated.id, roster: updated.roster };
 };
 
 /** Live transcript and the rolling summaries produced so far. */

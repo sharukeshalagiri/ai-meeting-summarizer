@@ -3,7 +3,7 @@ import multer, { MulterError } from "multer";
 import path from "path";
 import { NextFunction, Request, Response } from "express";
 import { env } from "../lib/env";
-import { AppError, BadRequest } from "../types/errors";
+import { BadRequest } from "../types/errors";
 import {
   ALLOWED_MEDIA_EXTENSIONS,
   ALLOWED_MEDIA_MIME_TYPES,
@@ -51,7 +51,7 @@ export const upload = multer({
     }
 
     cb(
-      new Error(
+      BadRequest(
         `Unsupported file type "${file.mimetype || extension}". ` +
           `Upload an audio or video file.`
       )
@@ -85,7 +85,7 @@ export const uploadChunk = multer({
       return;
     }
 
-    cb(new Error(`Unsupported chunk type "${file.mimetype}".`));
+    cb(BadRequest(`Unsupported chunk type "${file.mimetype}".`));
   },
 });
 
@@ -110,13 +110,9 @@ export const handleUploadErrors = (
     return next(BadRequest(message));
   }
 
-  if (err instanceof AppError) {
-    return next(err);
-  }
-
-  if (err instanceof Error) {
-    return next(BadRequest(err.message));
-  }
-
+  // Everything else (AppErrors from fileFilter, and failures from the
+  // handlers after multer) goes to the central handler unchanged. It
+  // used to turn any Error into a 400 echoing its message, which mislabeled
+  // server faults and could leak internal detail.
   return next(err);
 };

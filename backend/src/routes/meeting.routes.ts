@@ -8,6 +8,7 @@ import {
   createMeeting,
   deleteMeeting,
   getMeetingActionItems,
+  getMeetingAudio,
   getMeetingById,
   getMeetingSegments,
   getMeetingSummary,
@@ -45,6 +46,9 @@ router.get("/:id/action-items", getMeetingActionItems);
 
 // Live transcript and rolling summaries while a capture is running.
 router.get("/:id/live", getLiveState);
+
+// Stream the stored recording (HTTP Range supported) for playback.
+router.get("/:id/audio", getMeetingAudio);
 
 // Upload only, so the client can drive each stage and show progress.
 router.post("/:id/audio", upload.single("audio"), saveMeetingAudio);
