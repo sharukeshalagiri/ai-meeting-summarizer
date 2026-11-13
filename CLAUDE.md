@@ -124,6 +124,9 @@ Per service: `npm --prefix backend run dev|test|typecheck|migrate|generate`,
 `npm --prefix frontend run dev|build|lint|typecheck`,
 `node scripts/ai-service.mjs dev|test|install|install:test`.
 
+- The backend runs without the ai-service: everything except
+  transcription works, and `/transcribe` returns a 502 with "Could not
+  reach the transcription service" (smoke-tested).
 - `npm run setup:ai` installs openai-whisper and torch, which is large. For
   tests only, `npm run setup:ai:test` installs fastapi, httpx and pytest.
   The tests stub out `whisper`.
@@ -175,11 +178,9 @@ each one ends in a PR. To keep them from colliding:
 - **One shared Postgres container.** `docker-compose.yml` has a fixed
   `name:`, so `npm run db:up` from any worktree reuses the same container.
   Isolate data by **database name** in each worktree's `DATABASE_URL`
-  (e.g. `.../ai_meeting_summarizer_feat_auth`). If `db:migrate` reports
-  that the database does not exist, create it with
-  `docker compose exec postgres createdb -U postgres <db>` and migrate
-  again. (Not yet verified whether `prisma migrate deploy` creates the
-  database automatically.)
+  (e.g. `.../ai_meeting_summarizer_feat_auth`). `npm run db:migrate`
+  (`prisma migrate deploy`) creates the database if it does not exist
+  (verified against the compose container).
 - **Different ports per worktree.** Set `PORT`, `AI_SERVICE_PORT` and
   `FRONTEND_PORT`, and point `AI_SERVICE_URL` and `VITE_API_URL` at them.
 - Each worktree needs its own `npm run setup`, because `node_modules` and
