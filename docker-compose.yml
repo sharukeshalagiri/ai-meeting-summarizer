@@ -1,0 +1,36 @@
+# Local PostgreSQL for development.
+#
+# The project name is fixed so every git worktree shares ONE container
+# and volume instead of each starting its own on a clashing port. Worktrees
+# isolate their data by database name: set a different database in each
+# worktree's backend/.env DATABASE_URL and run `npm run db:migrate`.
+#
+# Host port defaults to 5433 so it does not collide with a locally
+# installed PostgreSQL on 5432. Override any value in a root .env file
+# (see .env.example).
+
+name: ai-meeting-summarizer
+
+services:
+  postgres:
+    # pgvector-enabled PostgreSQL 16. The schema still stores embeddings
+    # as float8[] (see docs/DECISIONS.md); this image makes a later move
+    # to the vector type possible without changing infrastructure.
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_meeting_summarizer}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

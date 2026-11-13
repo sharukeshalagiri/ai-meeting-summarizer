@@ -7,6 +7,7 @@ embed for search.
 """
 
 import os
+import threading
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -14,10 +15,24 @@ import whisper
 
 app = FastAPI(title="AI Meeting Assistant - Speech Service")
 
-# Loaded once at import: the model takes seconds to initialize and is
-# safe to reuse across requests.
 MODEL_NAME = os.getenv("WHISPER_MODEL", "base")
-model = whisper.load_model(MODEL_NAME)
+
+# Loaded on first transcription rather than at import, so /health
+# answers immediately on boot and tests can import the app without
+# downloading a model. The model is reused across requests.
+_model = None
+_model_lock = threading.Lock()
+
+
+def get_model():
+    global _model
+
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                _model = whisper.load_model(MODEL_NAME)
+
+    return _model
 
 
 class TranscriptRequest(BaseModel):
@@ -30,7 +45,7 @@ class TranscriptRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME}
+    return {"status": "ok", "model": MODEL_NAME, "loaded": _model is not None}
 
 
 @app.post("/transcribe")
@@ -42,7 +57,7 @@ def transcribe_audio(request: TranscriptRequest):
         )
 
     try:
-        result = model.transcribe(request.file_path)
+        result = get_model().transcribe(request.file_path)
     except Exception as exc:  # noqa: BLE001 - surfaced to the caller
         raise HTTPException(
             status_code=500, detail=f"Transcription failed: {exc}"

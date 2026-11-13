@@ -1,0 +1,97 @@
+{
+  "transcript": "project-meeting.json",
+  "mode": "project",
+  "description": "Four-person planning meeting for a search feature: five tasks (three with relative deadlines), one decision, one open question, and small talk at both ends.",
+  "mustAppear": [
+    {
+      "id": "decision-postgres-fts",
+      "kind": "decision",
+      "match": ["postgres", "full-text"],
+      "evidenceStartMs": [68800]
+    },
+    {
+      "id": "task-search-endpoint",
+      "kind": "actionItem",
+      "match": ["endpoint"],
+      "owner": "Marcus",
+      "dueDate": "Friday",
+      "evidenceStartMs": [76200, 82600]
+    },
+    {
+      "id": "task-results-page",
+      "kind": "actionItem",
+      "match": ["results page"],
+      "owner": "Lena",
+      "dueDate": "end of next week",
+      "evidenceStartMs": [90400]
+    },
+    {
+      "id": "task-test-plan",
+      "kind": "actionItem",
+      "match": ["test plan"],
+      "owner": "Tom",
+      "dueDate": "tomorrow",
+      "evidenceStartMs": [105200]
+    },
+    {
+      "id": "task-migration",
+      "kind": "actionItem",
+      "match": ["migration"],
+      "owner": "Marcus",
+      "dueDate": null,
+      "evidenceStartMs": [116000, 122400]
+    },
+    {
+      "id": "task-announcement-email",
+      "kind": "actionItem",
+      "match": ["announcement"],
+      "owner": "Priya",
+      "dueDate": null,
+      "evidenceStartMs": [126800]
+    },
+    {
+      "id": "question-day-one-or-flag",
+      "kind": "openQuestion",
+      "match": ["flag"],
+      "evidenceStartMs": [131200]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-rain",
+      "kind": "any",
+      "match": ["rain"],
+      "reason": "Weekend small talk before the agenda."
+    },
+    {
+      "id": "smalltalk-puzzle",
+      "kind": "any",
+      "match": ["puzzle"],
+      "reason": "Weekend small talk before the agenda."
+    },
+    {
+      "id": "smalltalk-coffee",
+      "kind": "any",
+      "match": ["coffee"],
+      "reason": "Excuse for joining late, not meeting content."
+    },
+    {
+      "id": "smalltalk-lunch",
+      "kind": "any",
+      "match": ["lunch"],
+      "reason": "Social plan; must not surface as a date, task or decision."
+    },
+    {
+      "id": "rejected-rust-rewrite",
+      "kind": "any",
+      "match": ["rust"],
+      "reason": "A joke that was explicitly rejected; not a decision or task."
+    },
+    {
+      "id": "parked-dark-mode",
+      "kind": "actionItem",
+      "match": ["dark mode"],
+      "reason": "Explicitly parked with no owner; not a task."
+    }
+  ]
+}

@@ -1,0 +1,128 @@
+[
+  {
+    "speaker": "Professor",
+    "text": "Alright, let's settle in. Before we start, how was everyone's weekend? Anyone see the game?",
+    "startMs": 0,
+    "endMs": 7000
+  },
+  {
+    "speaker": "Student",
+    "text": "We lost, don't remind us.",
+    "startMs": 7400,
+    "endMs": 10400
+  },
+  {
+    "speaker": "Professor",
+    "text": "Ha, sorry to hear it. Okay, today we're covering hash tables, which build directly on last week's arrays.",
+    "startMs": 10800,
+    "endMs": 18800
+  },
+  {
+    "speaker": "Professor",
+    "text": "Let's start with a definition. A hash function is a function that maps a key of arbitrary size to a fixed-size integer, which we use as an index into an array of buckets.",
+    "startMs": 19200,
+    "endMs": 31200
+  },
+  {
+    "speaker": "Professor",
+    "text": "The important property is that the same key always produces the same index, and different keys should spread out evenly.",
+    "startMs": 31600,
+    "endMs": 40600
+  },
+  {
+    "speaker": "Professor",
+    "text": "When two keys land in the same bucket, there are two main ways to handle it.",
+    "startMs": 41000,
+    "endMs": 49000
+  },
+  {
+    "speaker": "Professor",
+    "text": "The first is separate chaining, where each bucket holds a linked list of entries.",
+    "startMs": 49400,
+    "endMs": 56400
+  },
+  {
+    "speaker": "Professor",
+    "text": "The second is open addressing, where you probe for the next free slot, for example with linear probing.",
+    "startMs": 56800,
+    "endMs": 64800
+  },
+  {
+    "speaker": "Professor",
+    "text": "Pay attention to this next part, because this will be on the exam: the difference between chaining and open addressing, and when you'd pick each.",
+    "startMs": 65200,
+    "endMs": 75200
+  },
+  {
+    "speaker": "Student",
+    "text": "Is it okay if we just memorize the definitions?",
+    "startMs": 75600,
+    "endMs": 78600
+  },
+  {
+    "speaker": "Professor",
+    "text": "Definitions won't be enough, you'll need to explain the trade-off. Chaining degrades gracefully, open addressing has better cache behavior.",
+    "startMs": 79000,
+    "endMs": 88000
+  },
+  {
+    "speaker": "Professor",
+    "text": "Now, the load factor, which you saw in the reading for today.",
+    "startMs": 88400,
+    "endMs": 95400
+  },
+  {
+    "speaker": "Professor",
+    "text": "When the load factor gets too high, around zero point seven five for open addressing, you resize and rehash everything.",
+    "startMs": 95800,
+    "endMs": 104800
+  },
+  {
+    "speaker": "Professor",
+    "text": "And again, this will be on the exam: computing the amortized cost of insertion when the table doubles in size.",
+    "startMs": 105200,
+    "endMs": 114200
+  },
+  {
+    "speaker": "Professor",
+    "text": "As a side note, my old advisor used to say hash tables are the duct tape of computer science. Not on the exam, just a nice line.",
+    "startMs": 114600,
+    "endMs": 123600
+  },
+  {
+    "speaker": "Student",
+    "text": "Will the slides be posted?",
+    "startMs": 124000,
+    "endMs": 126000
+  },
+  {
+    "speaker": "Professor",
+    "text": "Yes, the slides will be up tonight.",
+    "startMs": 126400,
+    "endMs": 129400
+  },
+  {
+    "speaker": "Professor",
+    "text": "For homework, implement a hash table with separate chaining in the language of your choice, with insert, lookup and delete.",
+    "startMs": 129800,
+    "endMs": 138800
+  },
+  {
+    "speaker": "Professor",
+    "text": "The homework is due next Tuesday before class. Submit it through the course portal.",
+    "startMs": 139200,
+    "endMs": 145200
+  },
+  {
+    "speaker": "Professor",
+    "text": "If you finish early, you might enjoy reading about cuckoo hashing, but that's purely optional.",
+    "startMs": 145600,
+    "endMs": 151600
+  },
+  {
+    "speaker": "Professor",
+    "text": "Okay, that's time. See you Thursday.",
+    "startMs": 152000,
+    "endMs": 155000
+  }
+]

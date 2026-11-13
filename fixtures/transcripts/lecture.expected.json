@@ -1,0 +1,58 @@
+{
+  "transcript": "lecture.json",
+  "mode": "lecture",
+  "description": "Data-structures lecture on hash tables: two explicit exam flags, one definition, one homework deadline, plus small talk and an aside the professor says is not on the exam.",
+  "mustAppear": [
+    {
+      "id": "exam-chaining-vs-open-addressing",
+      "kind": "examTopic",
+      "match": ["chaining", "open addressing"],
+      "evidenceStartMs": [65200]
+    },
+    {
+      "id": "exam-amortized-insertion",
+      "kind": "examTopic",
+      "match": ["amortized"],
+      "evidenceStartMs": [105200]
+    },
+    {
+      "id": "definition-hash-function",
+      "kind": "definition",
+      "match": ["hash function"],
+      "evidenceStartMs": [19200]
+    },
+    {
+      "id": "homework-chained-hash-table",
+      "kind": "homework",
+      "match": ["hash table"],
+      "dueDate": "next Tuesday",
+      "evidenceStartMs": [129800, 139200]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-game",
+      "kind": "any",
+      "match": ["game"],
+      "reason": "Small talk before the lecture."
+    },
+    {
+      "id": "aside-duct-tape",
+      "kind": "any",
+      "match": ["duct tape"],
+      "reason": "Anecdote the professor says is not on the exam."
+    },
+    {
+      "id": "optional-cuckoo",
+      "kind": "homework",
+      "match": ["cuckoo"],
+      "reason": "Optional reading, not assigned homework."
+    },
+    {
+      "id": "not-an-exam-topic-memorize",
+      "kind": "examTopic",
+      "match": ["memorize"],
+      "reason": "A student question, not something flagged for the exam."
+    }
+  ]
+}

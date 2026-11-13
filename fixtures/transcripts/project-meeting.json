@@ -1,0 +1,170 @@
+[
+  {
+    "speaker": "Priya",
+    "text": "Morning everyone, give it a sec, Tom is still joining.",
+    "startMs": 0,
+    "endMs": 4000
+  },
+  {
+    "speaker": "Marcus",
+    "text": "Did anyone else get caught in that rain on Saturday? I was halfway up the trail when it started.",
+    "startMs": 4400,
+    "endMs": 10400
+  },
+  {
+    "speaker": "Lena",
+    "text": "Ha, I stayed in and finally finished that puzzle. Two thousand pieces.",
+    "startMs": 10800,
+    "endMs": 15800
+  },
+  {
+    "speaker": "Tom",
+    "text": "Sorry, sorry, the coffee machine on four is broken again so I had to go downstairs.",
+    "startMs": 16200,
+    "endMs": 22200
+  },
+  {
+    "speaker": "Priya",
+    "text": "No worries. Okay, let's get into it. The goal today is to lock the plan for the search feature before the beta.",
+    "startMs": 22600,
+    "endMs": 29600
+  },
+  {
+    "speaker": "Priya",
+    "text": "First question is the backend. Marcus, where did you land on Elasticsearch versus Postgres full-text search?",
+    "startMs": 30000,
+    "endMs": 36000
+  },
+  {
+    "speaker": "Marcus",
+    "text": "I benchmarked both on last month's data. Postgres full-text is within twenty milliseconds of Elasticsearch for our volume, and it's one less service to run.",
+    "startMs": 36400,
+    "endMs": 46400
+  },
+  {
+    "speaker": "Tom",
+    "text": "Half joking, but should we just rewrite the indexer in Rust while we're at it?",
+    "startMs": 46800,
+    "endMs": 51800
+  },
+  {
+    "speaker": "Marcus",
+    "text": "Let's not. That's a whole quarter of work for no measurable gain.",
+    "startMs": 52200,
+    "endMs": 56200
+  },
+  {
+    "speaker": "Priya",
+    "text": "Agreed, no rewrite. So, are we all comfortable going with Postgres full-text search for version one?",
+    "startMs": 56600,
+    "endMs": 62600
+  },
+  {
+    "speaker": "Lena",
+    "text": "Yes from me.",
+    "startMs": 63000,
+    "endMs": 65000
+  },
+  {
+    "speaker": "Tom",
+    "text": "Fine by me, it's easier to test.",
+    "startMs": 65400,
+    "endMs": 68400
+  },
+  {
+    "speaker": "Priya",
+    "text": "Great, then that's decided: we use Postgres full-text search for v1 and revisit Elasticsearch only if we outgrow it.",
+    "startMs": 68800,
+    "endMs": 75800
+  },
+  {
+    "speaker": "Priya",
+    "text": "Marcus, can you build the search API endpoint? I'd like it by Friday so Lena isn't blocked.",
+    "startMs": 76200,
+    "endMs": 82200
+  },
+  {
+    "speaker": "Marcus",
+    "text": "Yeah, I'll have the search endpoint up by Friday.",
+    "startMs": 82600,
+    "endMs": 86600
+  },
+  {
+    "speaker": "Priya",
+    "text": "Lena, the search results page.",
+    "startMs": 87000,
+    "endMs": 90000
+  },
+  {
+    "speaker": "Lena",
+    "text": "I can do the results page. I'll aim to have it ready by the end of next week, since it depends on Marcus's endpoint.",
+    "startMs": 90400,
+    "endMs": 98400
+  },
+  {
+    "speaker": "Priya",
+    "text": "Tom, we need a test plan for search, edge cases, empty queries, that kind of thing.",
+    "startMs": 98800,
+    "endMs": 104800
+  },
+  {
+    "speaker": "Tom",
+    "text": "Sure, I'll write the search test plan. I'll get you a draft tomorrow.",
+    "startMs": 105200,
+    "endMs": 110200
+  },
+  {
+    "speaker": "Lena",
+    "text": "Someone could maybe look at dark mode at some point, but that's not for now.",
+    "startMs": 110600,
+    "endMs": 115600
+  },
+  {
+    "speaker": "Priya",
+    "text": "Right, parking that. Marcus, one more thing: the migration for the new search index columns.",
+    "startMs": 116000,
+    "endMs": 122000
+  },
+  {
+    "speaker": "Marcus",
+    "text": "Sure, I'll write that migration too.",
+    "startMs": 122400,
+    "endMs": 126400
+  },
+  {
+    "speaker": "Priya",
+    "text": "And I'll update the beta announcement email to mention search.",
+    "startMs": 126800,
+    "endMs": 130800
+  },
+  {
+    "speaker": "Tom",
+    "text": "Do we know yet whether the beta users get search on day one, or behind a flag?",
+    "startMs": 131200,
+    "endMs": 136200
+  },
+  {
+    "speaker": "Priya",
+    "text": "Good question, I don't know yet. I'll need to check with sales.",
+    "startMs": 136600,
+    "endMs": 140600
+  },
+  {
+    "speaker": "Lena",
+    "text": "By the way, are we still doing the team lunch thing on Thursday?",
+    "startMs": 141000,
+    "endMs": 145000
+  },
+  {
+    "speaker": "Marcus",
+    "text": "I hope so, I've been looking forward to that taco place.",
+    "startMs": 145400,
+    "endMs": 149400
+  },
+  {
+    "speaker": "Priya",
+    "text": "Yes, Thursday lunch is on. Okay, I think that's everything. Thanks all.",
+    "startMs": 149800,
+    "endMs": 154800
+  }
+]
