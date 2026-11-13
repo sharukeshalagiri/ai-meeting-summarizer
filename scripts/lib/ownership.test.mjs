@@ -85,6 +85,23 @@ describe("trackForBranch", () => {
     assert.equal(trackForBranch("chore/parallel-foundation", tracks), null);
     assert.equal(trackForBranch("worktree-unknown", tracks), null);
   });
+
+  it("maps every track's lead+subagent branch <track>/impl", () => {
+    for (const name of tracks.keys()) {
+      assert.equal(trackForBranch(`${name}/impl`, tracks), name);
+    }
+  });
+
+  it("enforces ownership on a <track>/impl branch", () => {
+    const r = checkPaths({
+      branch: "w1-asr/impl",
+      paths: ["ai-service/main.py", "ai-service/diarization/x.py"],
+      ownership,
+    });
+    assert.equal(r.mode, "track");
+    assert.equal(r.track, "w1-asr");
+    assert.deepEqual(r.violations.map((v) => v.path), ["ai-service/diarization/x.py"]);
+  });
 });
 
 describe("testSubject", () => {

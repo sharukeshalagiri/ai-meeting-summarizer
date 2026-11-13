@@ -27,10 +27,13 @@ export interface TranscribedSegment {
   /** Set when the audio was stereo and channels were split. */
   channel?: "mic" | "remote" | null;
   words?: WordTiming[];
-  /** e.g. Whisper's no_speech_prob; higher = less likely speech. */
+  /**
+   * e.g. Whisper's no_speech_prob; higher = less likely speech. Used by
+   * the hallucination guards, which drop non-speech instead of labelling
+   * it (TranscriptSegment.noiseLabel is the later CLEAN-pass relevance
+   * label, not an ASR output).
+   */
   noSpeechProb?: number;
-  /** Non-speech label (MUSIC, NOISE, ...) when the provider classifies. */
-  noiseLabel?: string | null;
 }
 
 export interface TranscriptionRequest {

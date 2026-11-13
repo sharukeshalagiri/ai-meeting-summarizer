@@ -70,7 +70,9 @@ Run these in order and fix any failure yourself before moving on:
 4. Commit.
 5. `git fetch origin && git rebase origin/main`.
 6. Re-run the tests from step 1.
-7. Push your branch (`git push -u origin worktree-<track>`).
+7. Push your branch by name: `git push -u origin <your-branch>` (e.g.
+   `worktree-w1-sum` or `w1-sum/impl`). A bare `git push` is denied,
+   because it follows the upstream and could target `main`.
 8. `gh pr create --base main --label wave-<n>` and fill in the PR template
    (`.github/pull_request_template.md`). Files outside ownership must be
    "None".
@@ -79,3 +81,31 @@ Run these in order and fix any failure yourself before moving on:
 
 **Merging is done later by the integrator session, after the engineer
 approves.** Do not merge.
+
+## Lead + subagent mode
+
+The alternative to one terminal per track: **one terminal**, where a
+**lead session** builds tracks in pairs using the `track-builder`
+subagent (`.claude/agents/track-builder.md`, `isolation: worktree`).
+
+1. **Pairs.** The lead starts two `track-builder` subagents at a time, one
+   per track in the pair (e.g. w1-ext + w1-desk). Each works in its own
+   isolated worktree.
+2. **Branches.** Each subagent creates `<track>/impl` (e.g. `w1-sum/impl`)
+   and runs `npm run worktree:env <track>`. `check-ownership` maps
+   `<track>/impl` to the track (tested in `scripts/lib/ownership.test.mjs`),
+   so the same ownership rules and CI checks apply.
+3. **Plans first.** Each subagent returns only a plan (files, tests,
+   risks, decisions needed) and makes no edits. The lead shows **both plans
+   to the engineer together** and resumes each subagent with the approval
+   or changes (gate a).
+4. **Decisions.** Subagents can't ask the engineer anything. At any gate
+   they stop and return a block starting `DECISION NEEDED:` with 2–3
+   options and a recommendation. The lead relays it word for word and
+   resumes the subagent with the answer.
+5. **Build.** Each subagent implements, tests and follows the finish
+   protocol up to an open PR with green CI, then reports in 5 lines or
+   fewer plus the PR URL. If a subagent lacks a tool (e.g. a gated
+   command), it says so and the lead does that step.
+6. **Merging.** Only the lead merges, and only after the engineer
+   approves (gate b). Subagents never merge.

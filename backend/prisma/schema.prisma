@@ -101,7 +101,10 @@ model TranscriptSegment {
   /// "mic" (left channel, the user) | "remote" (right channel) | null
   /// for mono or pre-stereo audio.
   channel    String?
-  /// Non-speech classification, e.g. MUSIC, NOISE, SILENCE. Null = speech.
+  /// CLEAN-pass relevance label: substantive | small_talk | logistics |
+  /// filler | off_topic. Null = not yet classified. Non-speech audio
+  /// (music, silence) never becomes a segment: the ASR hallucination
+  /// guards drop it, so it is not labelled here.
   noiseLabel String?
   /// Word-level timings: [{ w, startMs, endMs, p? }].
   words      Json?

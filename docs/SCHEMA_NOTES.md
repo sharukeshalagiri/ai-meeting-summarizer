@@ -34,7 +34,7 @@ pg-boss (Wave 3) keeps its own tables; nothing else is reserved for it.
 | Field | Type | Meaning | Filled by |
 | --- | --- | --- | --- |
 | `channel` | String? | `"mic"` (left channel, the user) \| `"remote"` (right channel, everyone else) \| null for mono or older rows. | w1-asr |
-| `noiseLabel` | String? | Non-speech classification (`MUSIC`, `NOISE`, `SILENCE`, …). Null means speech. Summaries should skip labelled segments. | w1-asr |
+| `noiseLabel` | String? | **Relevance label from the CLEAN pass**: `substantive` \| `small_talk` \| `logistics` \| `filler` \| `off_topic`. **Null = not yet classified** (not "clean"). The summarizer uses it to leave small talk, logistics and filler out of the summary. It does **not** describe non-speech audio: music and silence are dropped earlier by the ASR hallucination guards (e.g. the `noSpeechProb` filter) and never become segments. Still a plain string, so no migration is needed to start filling it. | the CLEAN pass (summary pipeline) |
 | `words` | Json? | Word timings `[{ "w": "hello", "startMs": 1200, "endMs": 1450, "p": 0.93 }]`. | w1-asr |
 | `speakerId` | String? → `SpeakerProfile.id` (on delete: set null) | The resolved speaker. `speaker` (text label) stays for display and older rows. | w2-spk |
 
