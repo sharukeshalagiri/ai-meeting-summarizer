@@ -22,7 +22,11 @@ export interface TranscriptionResult {
  */
 const NO_SPEECH_THRESHOLD = 0.75;
 
-const parseSegments = (value: unknown): RawSegment[] => {
+/**
+ * Validates the segment list returned by the Whisper service. Exported
+ * so the filtering rules can be tested without a running service.
+ */
+export const parseSegments = (value: unknown): RawSegment[] => {
   if (!Array.isArray(value)) return [];
 
   return value.flatMap((raw) => {

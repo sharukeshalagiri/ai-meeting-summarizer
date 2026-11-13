@@ -1,0 +1,5 @@
+# Test dependencies only. Tests stub out `whisper`, so these are enough
+# to run the suite without installing torch or openai-whisper.
+fastapi
+httpx
+pytest

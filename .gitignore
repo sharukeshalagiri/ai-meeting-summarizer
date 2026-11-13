@@ -12,6 +12,8 @@ node_modules/
 .env.local
 .env.*.local
 **/.env
+!.env.example
+!**/.env.example
 
 
 # ================================
@@ -53,6 +55,9 @@ __pycache__/
 # User Uploads / Generated Data
 # ================================
 backend/uploads/
+**/uploads/
+recordings/
+**/recordings/
 
 
 # ================================
@@ -64,6 +69,11 @@ backend/uploads/
 *.m4a
 *.webm
 *.mp4
+*.flac
+*.opus
+*.aac
+*.mkv
+*.mov
 
 
 # ================================
@@ -85,3 +95,12 @@ logs/
 # ================================
 .DS_Store
 Thumbs.db
+
+
+# ================================
+# Tooling
+# ================================
+.pytest_cache/
+**/.pytest_cache/
+coverage/
+.claude/settings.local.json

@@ -1,5 +1,28 @@
 {
-  "dependencies": {
-    "@google/genai": "^2.12.0"
+  "name": "ai-meeting-summarizer",
+  "private": true,
+  "description": "Personal meeting companion: capture, transcribe, attribute and summarize meetings.",
+  "scripts": {
+    "setup": "npm install && npm --prefix backend install && npm --prefix frontend install && npm run setup:ai",
+    "setup:ai": "node scripts/ai-service.mjs install",
+    "setup:ai:test": "node scripts/ai-service.mjs install:test",
+    "db:up": "docker compose up -d --wait postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "npm --prefix backend run migrate",
+    "start": "npm run db:up && npm run db:migrate && npm run dev",
+    "dev": "concurrently -k -n api,web,ai -c blue,magenta,green \"npm:dev:api\" \"npm:dev:web\" \"npm:dev:ai\"",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:web": "npm --prefix frontend run dev",
+    "dev:ai": "node scripts/ai-service.mjs dev",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm run test:api && npm run test:ai",
+    "test:api": "npm --prefix backend test",
+    "test:ai": "node scripts/ai-service.mjs test",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "check": "npm run typecheck && npm run lint && npm test && npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7"
   }
 }
