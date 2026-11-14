@@ -358,3 +358,31 @@ def test_main_registers_the_routes():
 
     paths = set(main.app.openapi()["paths"])
     assert {"/diarize", "/diarize/health", "/transcribe"} <= paths
+
+
+# ---- bench.py (pure parts; the bench itself needs the model) ------------
+
+
+def test_bench_rttm_and_merge():
+    from diarization import bench
+
+    rttm = (
+        "SPEAKER ES2004a 1 0.50 2.00 <NA> <NA> A <NA> <NA>\n"
+        "SPEAKER ES2004a 1 2.70 1.00 <NA> <NA> A <NA> <NA>\n"
+        "SPEAKER ES2004a 1 4.00 1.00 <NA> <NA> B <NA> <NA>\n"
+    )
+    turns = bench.merge_turns(bench.parse_rttm(rttm))
+    assert turns == [(0.5, 3.7, "A"), (4.0, 5.0, "B")]
+
+
+def test_bench_keeps_a_speaker_across_chunks_with_the_fake_engine():
+    from diarization import bench
+
+    audio = timeline((1, 10), (2, 10), (1, 10))
+    turns = [(0.0, 10.0, "A"), (10.0, 20.0, "B"), (20.0, 30.0, "A")]
+    chunks = bench.embed_chunks(audio, turns, 15, FakeEngine())
+    labelled, profiles = bench.attribute(chunks, 0.5, bench.MATCH_SIMILARITY)
+    result = bench.score(chunks, labelled)
+    assert profiles == 2
+    assert result["speaker_error"] == 0
+    assert result["boundary_splits"] == 0
