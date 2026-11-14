@@ -1,0 +1,95 @@
+/* Transcript speakers and noise folds (track w2-spk). Builds on the
+   .speaker-chip / .turn / button tokens in index.css. */
+
+.speaker-chip-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+button.speaker-chip-button {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px dashed transparent;
+  border-radius: 999px;
+}
+
+button.speaker-chip-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.speaker-chip.is-me {
+  color: var(--text-h);
+  background: var(--surface-2);
+}
+
+button.speaker-suggestion {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+}
+
+button.speaker-suggestion:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.speaker-rename {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.speaker-rename input {
+  width: min(220px, 60vw);
+  min-height: 36px;
+  padding: 4px 10px;
+}
+
+.noise-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+button.noise-fold {
+  min-height: 24px;
+  padding: 0 8px;
+  margin: 0 4px 0 0;
+  font-size: 0.76rem;
+  font-weight: 450;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  vertical-align: baseline;
+}
+
+button.noise-fold:hover:not(:disabled) {
+  color: var(--text-h);
+  opacity: 1;
+}
+
+.turn.turn-folded .turn-head {
+  opacity: 0.7;
+}
+
+.transcript-error {
+  color: var(--live);
+  margin: 0 0 8px;
+}

@@ -1,82 +1,113 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { segmentElementId } from "../lib/audio/jumpToSegment";
 import { useAudioPlayer } from "../lib/audio/useAudioPlayer";
-import type { Segment } from "../types/meeting";
+import type { SpeakerSegment } from "../types/w2-spk";
+import SpeakerChip from "./transcript/SpeakerChip";
+import {
+  buildTurns,
+  filterTurns,
+  foldLabel,
+  isHiddenTurn,
+  isNoise,
+  partRuns,
+} from "./transcript/turns";
+import { useSpeakers } from "./transcript/useSpeakers";
+import "./transcript/transcript.css";
 
 interface Props {
-  segments: Segment[];
+  segments: SpeakerSegment[];
   /** Flat text, used for meetings recorded before diarization. */
   fallback?: string | null;
   /** Segment to scroll to and highlight, e.g. from a chat citation. */
   focusMs?: number | null;
 }
 
+const HIGHLIGHT_CLASS = "seg-highlight";
+
 /**
  * Speaker-attributed transcript reader.
  *
- * Consecutive segments from one speaker are merged into a turn: the
- * raw segments are as short as a clause, and one row each reads as a
- * wall of fragments rather than a conversation.
+ * - Consecutive segments from one speaker merge into a turn.
+ * - Click a speaker chip to rename that speaker everywhere (segments
+ *   now, summary and tasks at read time, logged as a Correction); a
+ *   suggested name can be accepted from the chip.
+ * - "Hide noise" (on by default) folds lines the summary's CLEAN pass
+ *   labelled small talk, logistics, filler or off topic.
+ *
+ * UI contract: every segment renders as <span id="seg-<idx>"
+ * data-start-ms>, hidden ones included, so jumpToSegment always finds
+ * its target; a jump to a hidden line unfolds it.
  */
 function TranscriptView({ segments, fallback, focusMs }: Props) {
+  const { id: meetingId } = useParams();
   const [query, setQuery] = useState("");
+  const [hideNoise, setHideNoise] = useState(true);
+  const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   const { seekTo, hasAudio } = useAudioPlayer();
   const focusRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  /** A folded segment a jump targeted, scrolled to once it renders. */
+  const pendingScroll = useRef<number | null>(null);
 
-  const turns = useMemo(() => {
-    const grouped: {
-      speaker: string;
-      text: string;
-      startMs: number;
-      endMs: number;
-      timestamp: string;
-      /** Kept so each segment renders its own id="seg-<idx>" anchor. */
-      parts: Segment[];
-    }[] = [];
+  const { speakers, names, rename, accept, busyKey, error, notice } = useSpeakers(
+    meetingId,
+    segments.length
+  );
 
-    for (const segment of segments) {
-      const last = grouped[grouped.length - 1];
+  const turns = useMemo(
+    () => buildTurns(segments, { names, hideNoise, revealed }),
+    [segments, names, hideNoise, revealed]
+  );
 
-      if (last && last.speaker === segment.speaker) {
-        last.text = `${last.text} ${segment.text}`;
-        last.endMs = segment.endMs;
-        last.parts.push(segment);
-      } else {
-        grouped.push({
-          speaker: segment.speaker,
-          text: segment.text,
-          startMs: segment.startMs,
-          endMs: segment.endMs,
-          timestamp: segment.timestamp,
-          parts: [segment],
-        });
-      }
-    }
+  const filtered = useMemo(() => filterTurns(turns, query), [turns, query]);
 
-    return grouped;
-  }, [segments]);
+  const noiseCount = useMemo(() => segments.filter(isNoise).length, [segments]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-
-    if (!needle) return turns;
-
-    return turns.filter(
-      (turn) =>
-        turn.text.toLowerCase().includes(needle) ||
-        turn.speaker.toLowerCase().includes(needle)
-    );
-  }, [turns, query]);
+  const reveal = (idx: number[]) =>
+    setRevealed((current) => new Set([...current, ...idx]));
 
   // Bring a cited moment into view when arriving from a chat answer.
   useEffect(() => {
     if (focusMs != null) {
-      focusRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-      });
+      focusRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [focusMs, filtered]);
+
+  // A jump (jumpToSegment) to a folded line highlights a hidden span,
+  // which cannot be scrolled to. Unfold it, then scroll once it shows.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target as HTMLElement;
+        if (
+          target.dataset?.hiddenSeg === "true" &&
+          target.classList.contains(HIGHLIGHT_CLASS)
+        ) {
+          const idx = Number(target.id.replace(/^seg-/, ""));
+          if (Number.isFinite(idx)) {
+            pendingScroll.current = idx;
+            reveal([idx]);
+          }
+        }
+      }
+    });
+
+    observer.observe(body, { attributes: true, attributeFilter: ["class"], subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const idx = pendingScroll.current;
+    if (idx == null) return;
+    pendingScroll.current = null;
+    document
+      .getElementById(segmentElementId(idx))
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [turns]);
 
   if (segments.length === 0) {
     return (
@@ -90,7 +121,21 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
     );
   }
 
-  const speakers = [...new Set(turns.map((turn) => turn.speaker))];
+  const speakerCount = new Set(turns.map((turn) => turn.key)).size;
+
+  const renderSpan = (part: SpeakerSegment, first: boolean, hidden: boolean) => (
+    <span
+      key={part.idx}
+      id={segmentElementId(part.idx)}
+      data-start-ms={part.startMs}
+      data-hidden-seg={hidden ? "true" : undefined}
+      hidden={hidden}
+      className="seg"
+    >
+      {first ? "" : " "}
+      {part.text}
+    </span>
+  );
 
   return (
     <div className="transcript">
@@ -108,14 +153,37 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
           />
         </div>
 
+        {noiseCount > 0 && (
+          <label className="noise-toggle">
+            <input
+              type="checkbox"
+              checked={hideNoise}
+              onChange={(event) => {
+                setHideNoise(event.target.checked);
+                setRevealed(new Set());
+              }}
+            />
+            Hide noise
+            <span className="muted tiny">
+              ({noiseCount} line{noiseCount === 1 ? "" : "s"})
+            </span>
+          </label>
+        )}
+
         <p className="muted tiny">
-          {speakers.length} speaker{speakers.length === 1 ? "" : "s"}{" "}
-          &middot; {turns.length} turn{turns.length === 1 ? "" : "s"}
+          {speakerCount} speaker{speakerCount === 1 ? "" : "s"} &middot;{" "}
+          {turns.length} turn{turns.length === 1 ? "" : "s"}
           {query && ` · ${filtered.length} matching`}
         </p>
       </div>
 
-      <div className="content-box transcript-body">
+      {(error || notice) && (
+        <p className={`tiny ${error ? "transcript-error" : "muted"}`} role="status">
+          {error ?? notice}
+        </p>
+      )}
+
+      <div className="content-box transcript-body" ref={bodyRef}>
         {filtered.length === 0 ? (
           <p className="muted">
             Nothing in this transcript matches &ldquo;{query}&rdquo;.
@@ -125,18 +193,28 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
             // A citation points at a segment; highlight the turn that
             // absorbed it.
             const isFocused =
-              focusMs != null &&
-              focusMs >= turn.startMs &&
-              focusMs <= turn.endMs;
+              focusMs != null && focusMs >= turn.startMs && focusMs <= turn.endMs;
+            const speaker = speakers.get(turn.key);
+            const allHidden = isHiddenTurn(turn);
 
             return (
               <div
-                key={`${turn.startMs}-${turn.speaker}`}
+                key={turn.parts[0].idx}
                 ref={isFocused ? focusRef : undefined}
-                className={`turn ${isFocused ? "is-focused" : ""}`}
+                className={`turn ${isFocused ? "is-focused" : ""} ${
+                  allHidden ? "turn-folded" : ""
+                }`}
               >
                 <div className="turn-head">
-                  <span className="speaker-chip">{turn.speaker}</span>
+                  <SpeakerChip
+                    name={turn.speaker}
+                    isMe={turn.isMe || !!speaker?.isMe}
+                    suggestion={speaker?.suggestion ?? null}
+                    editable={!!meetingId}
+                    busy={busyKey === turn.key}
+                    onRename={(name) => rename(turn.key, name)}
+                    onAccept={() => accept(turn.key)}
+                  />
                   {hasAudio ? (
                     <button
                       type="button"
@@ -154,17 +232,22 @@ function TranscriptView({ segments, fallback, focusMs }: Props) {
                 {/* UI contract: one anchor per segment, id="seg-<idx>"
                     using TranscriptSegment.idx (sparse for live). */}
                 <p className="turn-text">
-                  {turn.parts.map((part, i) => (
-                    <span
-                      key={part.idx}
-                      id={segmentElementId(part.idx)}
-                      data-start-ms={part.startMs}
-                      className="seg"
-                    >
-                      {i > 0 ? " " : ""}
-                      {part.text}
-                    </span>
-                  ))}
+                  {partRuns(turn).map((run, r) =>
+                    run.hidden ? (
+                      <span key={`fold-${run.parts[0].idx}`}>
+                        <button
+                          type="button"
+                          className="noise-fold"
+                          onClick={() => reveal(run.parts.map((p) => p.idx))}
+                        >
+                          {foldLabel(run.parts)}
+                        </button>
+                        {run.parts.map((part) => renderSpan(part, true, true))}
+                      </span>
+                    ) : (
+                      run.parts.map((part, i) => renderSpan(part, r === 0 && i === 0, false))
+                    )
+                  )}
                 </p>
               </div>
             );
