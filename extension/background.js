@@ -1,17 +1,13 @@
 import { createCaptureClient } from "./lib/capture/contract.js";
+import { SessionState, chromeStorageArea } from "./lib/capture/sessionState.js";
 import { IdbChunkStore, UploadQueue } from "./lib/capture/uploadQueue.js";
 import {
   STOP_FLUSH_MS,
-  clearSession,
   detectPlatform,
-  getPendingEnds,
-  getSession,
   getSettings,
   hasBackendPermission,
   isInMeeting,
   isZoomLaunchPage,
-  setPendingEnds,
-  setSession,
 } from "./shared.js";
 
 /**
@@ -26,6 +22,14 @@ import {
  */
 
 const OFFSCREEN_PATH = "offscreen.html";
+
+/**
+ * Every read-modify-write of the stored session and pendingEnds goes
+ * through this serialized state (see lib/capture/sessionState.js), so a
+ * late progress message or a slow drain can never save a stale copy over
+ * the write Stop made.
+ */
+const state = new SessionState(chromeStorageArea(chrome.storage.local));
 const DRAIN_ALARM = "drain-chunks";
 
 const ZOOM_LAUNCH_MESSAGE =
@@ -94,7 +98,9 @@ const askContentScript = async (tabId) => {
 };
 
 const startCapture = async ({ tabId, mode, hints }) => {
-  if (await getSession()) {
+  // Early check so no backend session is created; startSession below
+  // re-checks atomically for two Starts racing.
+  if (await state.getSession()) {
     throw new Error("Already recording. Stop the current recording first.");
   }
 
@@ -140,7 +146,12 @@ const startCapture = async ({ tabId, mode, hints }) => {
     lastError: null,
   };
 
-  await setSession(session);
+  try {
+    await state.startSession(session);
+  } catch (error) {
+    await client.endSession(session.sessionId).catch(() => undefined);
+    throw error;
+  }
 
   try {
     await ensureOffscreen();
@@ -155,11 +166,14 @@ const startCapture = async ({ tabId, mode, hints }) => {
 
     session.hasMic = started.hasMic;
     session.micEnabled = started.hasMic;
-    await setSession(session);
+    await state.patchSession(session.sessionId, {
+      hasMic: started.hasMic,
+      micEnabled: started.hasMic,
+    });
   } catch (error) {
     // Nothing was recorded: end the empty session and clean up.
     await closeOffscreen().catch(() => undefined);
-    await clearSession();
+    await state.clearSession(session.sessionId);
     await client.endSession(session.sessionId).catch(() => undefined);
     throw error;
   }
@@ -177,12 +191,16 @@ let stopping = null;
 
 /**
  * Stops recording, waits up to STOP_FLUSH_MS for the queue, then ends
- * the session. If chunks are still waiting (offline), /end is deferred
- * to the drain alarm so no audio is cut off.
+ * the session. /end is sent only when the offscreen queue reports 0
+ * chunks left for this session; otherwise the session goes to
+ * pendingEnds and the drain sends /end once its chunks are uploaded.
+ * Every path (popup Stop, hang-up, tab close, navigation, browser
+ * restart) comes through here.
  */
 const stopCapture = () => {
   stopping ??= (async () => {
-    const session = await getSession();
+    // From here on, progress patches for this session are dropped.
+    const session = await state.markStopping();
 
     if (!session) return null;
 
@@ -203,7 +221,7 @@ const stopCapture = () => {
     }
 
     await closeOffscreen().catch(() => undefined);
-    await clearSession();
+    await state.clearSession(session.sessionId);
     setBadge("");
 
     const settings = await getSettings();
@@ -219,10 +237,7 @@ const stopCapture = () => {
     }
 
     if (!ended) {
-      const pending = new Set(await getPendingEnds());
-
-      pending.add(session.sessionId);
-      await setPendingEnds([...pending]);
+      await state.addPendingEnd(session.sessionId);
       await chrome.alarms.create(DRAIN_ALARM, { periodInMinutes: 1 });
       void drainBacklog();
     }
@@ -265,7 +280,7 @@ const drainBacklog = () => {
       onSessionEnded: (sessionId) => done.add(sessionId),
     });
 
-    for (const sessionId of await getPendingEnds()) {
+    for (const sessionId of await state.getPendingEnds()) {
       const left = await queue.flush(sessionId, 25_000);
 
       if ((await queue.state()).halted) break;
@@ -296,9 +311,8 @@ const drainBacklog = () => {
 
     queue.dispose();
 
-    const pendingEnds = (await getPendingEnds()).filter((id) => !done.has(id));
-
-    await setPendingEnds(pendingEnds);
+    // Remove only the ids finished here; an id Stop added meanwhile stays.
+    const pendingEnds = await state.removePendingEnds(done);
 
     const leftover = (await store.list()).filter((chunk) => !chunk.failed);
 
@@ -315,21 +329,21 @@ const drainBacklog = () => {
 };
 
 const setMic = async (enabled) => {
-  const session = await getSession();
+  const session = await state.getSession();
 
-  if (!session) throw new Error("Not recording.");
+  if (!session || session.stopping) throw new Error("Not recording.");
 
   const { micEnabled } = await sendToOffscreen({ type: "OFFSCREEN_MIC", enabled });
 
-  await setSession({ ...session, micEnabled });
+  await state.patchSession(session.sessionId, { micEnabled });
 
   return micEnabled;
 };
 
 const sendRoster = async (tabId, participants) => {
-  const session = await getSession();
+  const session = await state.getSession();
 
-  if (!session || session.tabId !== tabId || !participants?.length) return;
+  if (!session || session.stopping || session.tabId !== tabId || !participants?.length) return;
 
   const settings = await getSettings();
 
@@ -343,8 +357,8 @@ const status = async () => {
   const detected = detectPlatform(tab?.url);
 
   return {
-    session: await getSession(),
-    pendingEnds: await getPendingEnds(),
+    session: await state.getSession(),
+    pendingEnds: await state.getPendingEnds(),
     tab: tab
       ? {
           id: tab.id,
@@ -359,11 +373,12 @@ const status = async () => {
   };
 };
 
-/** Progress from the offscreen document, folded into the stored session for the popup. */
-const recordProgress = async (patch) => {
-  const session = await getSession();
-
-  if (session) await setSession({ ...session, ...patch });
+/**
+ * Progress from the offscreen document, folded into the stored session
+ * for the popup. Dropped if that session is stopping or gone.
+ */
+const recordProgress = (sessionId, patch) => {
+  if (sessionId) void state.patchSession(sessionId, patch);
 };
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -372,14 +387,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message?.type) {
     case "OFFSCREEN_PROGRESS":
-      void recordProgress({ chunkCount: message.chunkCount, elapsedMs: message.elapsedMs });
+      recordProgress(message.sessionId, {
+        chunkCount: message.chunkCount,
+        elapsedMs: message.elapsedMs,
+      });
       return false;
     case "OFFSCREEN_QUEUE":
-      void recordProgress({ queue: message.queue });
+      recordProgress(message.sessionId, { queue: message.queue });
       return false;
     case "OFFSCREEN_ERROR":
       console.error("Capture error:", message.error);
-      void recordProgress({ lastError: message.error });
+      recordProgress(message.sessionId, { lastError: message.error });
       return false;
     case "OFFSCREEN_TAB_ENDED":
       void stopCapture();
@@ -388,7 +406,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (sender.tab?.id !== undefined) void sendRoster(sender.tab.id, message.participants);
       return false;
     case "CALL_ENDED":
-      void getSession().then((session) => {
+      void state.getSession().then((session) => {
         if (session && session.tabId === sender.tab?.id) void stopCapture();
       });
       return false;
@@ -418,7 +436,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 /** Closing the meeting tab ends the meeting, so the capture ends with it. */
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const session = await getSession();
+  const session = await state.getSession();
 
   if (session?.tabId === tabId) await stopCapture();
 });
@@ -430,7 +448,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (!changeInfo.url) return;
 
-  const session = await getSession();
+  const session = await state.getSession();
 
   if (session?.tabId === tabId && session.platformCode && !isInMeeting(changeInfo.url)) {
     await stopCapture();
@@ -447,6 +465,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
  * stale REC badge and an orphaned session.
  */
 chrome.runtime.onStartup.addListener(async () => {
-  if (await getSession()) await stopCapture();
+  if (await state.getSession()) await stopCapture();
   else void drainBacklog();
 });

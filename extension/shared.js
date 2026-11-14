@@ -118,18 +118,8 @@ export const isInMeeting = (url) => {
   return true;
 };
 
-/** Session state, kept in storage so the popup can reopen mid-capture. */
-export const getSession = async () => (await chrome.storage.local.get("session")).session ?? null;
-
-export const setSession = (session) => chrome.storage.local.set({ session });
-
-export const clearSession = () => chrome.storage.local.remove("session");
-
-/**
- * Sessions stopped while chunks were still queued: the worker calls
- * /end for each once its chunks are uploaded.
+/*
+ * The stored session and pendingEnds are written only by the service
+ * worker, through lib/capture/sessionState.js (serialized
+ * read-modify-write). Other pages read them via the STATUS message.
  */
-export const getPendingEnds = async () =>
-  (await chrome.storage.local.get("pendingEnds")).pendingEnds ?? [];
-
-export const setPendingEnds = (pendingEnds) => chrome.storage.local.set({ pendingEnds });

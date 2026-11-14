@@ -265,6 +265,58 @@ describe("UploadQueue", () => {
   });
 });
 
+describe("UploadQueue across contexts (lost update)", () => {
+  /**
+   * Two uploaders share one IndexedDB store in the extension (offscreen
+   * queue and worker drain). If the other one confirms and deletes the
+   * chunk while this one's request is in flight, a retry or reject must
+   * not write its stale copy back.
+   */
+  it.each([
+    ["retry", { kind: "retry", status: 409, reason: "Still processing" }],
+    ["reject", { kind: "reject", status: 400, reason: "bad" }],
+  ] as const)("a %s after the chunk was confirmed elsewhere does not resurrect it", async (_name, late) => {
+    const store = new MemoryChunkStore();
+    let finish: (outcome: UploadOutcome) => void = () => undefined;
+    const queue = new UploadQueue({
+      store,
+      upload: () => new Promise<UploadOutcome>((resolve) => (finish = resolve)),
+    });
+
+    await queue.enqueue(makeChunk(0));
+    await settle();
+
+    // Other context: 200 for the same seq, deletes it.
+    await store.delete(chunkId(SESSION, 0));
+
+    finish(late);
+    await settle();
+
+    expect(await store.list()).toEqual([]);
+    queue.dispose();
+  });
+
+  it("a retry keeps attempts written by the other uploader (re-read, not stale copy)", async () => {
+    const store = new MemoryChunkStore();
+    let finish: (outcome: UploadOutcome) => void = () => undefined;
+    const queue = new UploadQueue({
+      store,
+      upload: () => new Promise<UploadOutcome>((resolve) => (finish = resolve)),
+    });
+
+    await queue.enqueue(makeChunk(0));
+    await settle();
+    await store.update(chunkId(SESSION, 0), (c) => ({ ...c, attempts: 4 }));
+
+    finish({ kind: "retry", status: 409, reason: "Still processing" });
+    await settle();
+
+    const [stored] = await store.list();
+    expect(stored.attempts).toBe(5);
+    queue.dispose();
+  });
+});
+
 describe("classifyChunkResponse", () => {
   it("maps the contract table", () => {
     const ok = { success: true, message: "", data: response(0) };

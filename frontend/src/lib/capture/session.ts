@@ -79,6 +79,13 @@ export const startCaptureSession = (options: CaptureSessionOptions): CaptureSess
       sessionId === options.sessionId && options.onSessionEnded?.(dropped),
   });
 
+  /**
+   * Chunks still being written to the store. stop() waits for them
+   * before flushing: otherwise the final chunk may not be stored yet,
+   * flush sees 0 left, and /end goes out before the last 20 s upload.
+   */
+  const enqueues = new Set<Promise<unknown>>();
+
   const mimeType = pickChunkMimeType((type) => MediaRecorder.isTypeSupported(type));
 
   const recorder = new ChunkRecorder({
@@ -99,9 +106,14 @@ export const startCaptureSession = (options: CaptureSessionOptions): CaptureSess
         nextAttemptAt: 0,
       };
 
-      queue.enqueue(queued).catch(() =>
-        options.onError?.("Could not save a chunk locally; it was not uploaded.")
-      );
+      const saving = queue
+        .enqueue(queued)
+        .catch(() =>
+          options.onError?.("Could not save a chunk locally; it was not uploaded.")
+        );
+
+      enqueues.add(saving);
+      void saving.finally(() => enqueues.delete(saving));
     },
     onError: () => options.onError?.("The recorder reported an error."),
   });
@@ -123,6 +135,7 @@ export const startCaptureSession = (options: CaptureSessionOptions): CaptureSess
     setMicEnabled: (enabled) => mix.setMicEnabled(enabled),
     async stop(flushTimeoutMs) {
       await recorder.stop();
+      await Promise.all([...enqueues]);
 
       stopLevels();
       mix.disconnect();

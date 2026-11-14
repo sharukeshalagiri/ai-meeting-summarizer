@@ -15,6 +15,16 @@ export interface ChunkStore {
   put(chunk: QueuedChunk): Promise<void>;
   delete(id: string): Promise<void>;
   list(): Promise<QueuedChunk[]>;
+  /**
+   * Atomic read-modify-write: re-reads the chunk and applies `change` to
+   * the stored copy, in one step (one IndexedDB transaction). Does
+   * nothing and returns false when the chunk is gone.
+   *
+   * The queue never writes back the copy it read before a slow upload:
+   * another context (offscreen queue, worker drain) may have confirmed
+   * and deleted the chunk meanwhile, and a stale put would resurrect it.
+   */
+  update(id: string, change: (current: QueuedChunk) => QueuedChunk): Promise<boolean>;
 }
 
 export class MemoryChunkStore implements ChunkStore {
@@ -30,6 +40,15 @@ export class MemoryChunkStore implements ChunkStore {
 
   async list() {
     return [...this.chunks.values()].map((chunk) => ({ ...chunk }));
+  }
+
+  async update(id: string, change: (current: QueuedChunk) => QueuedChunk) {
+    const current = this.chunks.get(id);
+
+    if (!current) return false;
+
+    this.chunks.set(id, { ...change({ ...current }), id });
+    return true;
   }
 }
 
@@ -86,6 +105,31 @@ export class IdbChunkStore implements ChunkStore {
 
   async list() {
     return (await this.tx("readonly", (store) => store.getAll())) as QueuedChunk[];
+  }
+
+  async update(id: string, change: (current: QueuedChunk) => QueuedChunk) {
+    const db = await this.open();
+
+    return new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      const read = store.get(id);
+      let updated = false;
+
+      // get and put share one readwrite transaction, so no other
+      // context can write the record between them.
+      read.onsuccess = () => {
+        const current = read.result as QueuedChunk | undefined;
+
+        if (!current) return;
+
+        store.put({ ...change(current), id });
+        updated = true;
+      };
+      tx.oncomplete = () => resolve(updated);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
   }
 }
 
@@ -295,20 +339,20 @@ export class UploadQueue {
         this.options.onUploaded?.(chunk, outcome.response, outcome.duplicate);
         return;
 
-      case "retry": {
-        const attempts = chunk.attempts + 1;
-
+      case "retry":
         this.lastRetry = outcome.reason;
-        await store.put({
-          ...chunk,
-          attempts,
-          nextAttemptAt: Date.now() + backoffDelay(attempts),
+        // Re-read, never write back `chunk`: it may have been confirmed
+        // and deleted by another uploader while this request was in
+        // flight (update() is then a no-op).
+        await store.update(chunk.id, (current) => {
+          const attempts = current.attempts + 1;
+
+          return { ...current, attempts, nextAttemptAt: Date.now() + backoffDelay(attempts) };
         });
         return;
-      }
 
       case "reject":
-        await store.put({ ...chunk, failed: outcome.reason });
+        await store.update(chunk.id, (current) => ({ ...current, failed: outcome.reason }));
         return;
 
       case "halt":

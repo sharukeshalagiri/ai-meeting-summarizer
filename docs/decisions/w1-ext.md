@@ -87,6 +87,36 @@ chunks, then `/end`.
 - **After `/end`:** both open MeetingDetails. The parallel wiring PR
   makes `/end` return immediately, and MeetingDetails polls.
 
+### Lost-update protection (found in review)
+
+Several contexts write shared state, so no writer may save a copy it
+read before a slow call:
+
+- **Chunk records:** retry and reject go through `ChunkStore.update()`,
+  which re-reads and writes inside one IndexedDB readwrite transaction
+  and does nothing if the chunk is gone. A chunk that the other uploader
+  confirmed and deleted is therefore never resurrected, and `attempts`
+  builds on the stored value.
+- **Session and `pendingEnds`** (`chrome.storage`, worker only): these go
+  through `lib/capture/sessionState.ts`, which serializes every
+  read-modify-write.
+  - `stopping` only goes false to true.
+  - Progress patches carry their `sessionId` and are dropped once that
+    session is stopping or gone.
+  - `pendingEnds` changes only by add or remove of specific IDs. Before
+    this fix, a drain saving its stale filtered list could drop an ID
+    that Stop added meanwhile, and that session's `/end` was never sent.
+- **Drain before `/end`:** `stop()` awaits in-flight `enqueue()` writes
+  before flushing. Otherwise the final partial chunk might not be stored
+  yet, flush would report 0 left, and `/end` would go out before it.
+  Every stop path goes through `stopCapture` in the extension: popup,
+  hang-up (`CALL_ENDED`), tab close, navigation and browser restart.
+  `/end` is sent only when the queue reports 0 left for that session,
+  and otherwise only by the drain after a flush that returns 0.
+- **Exception, web page:** it ends after a 2-minute flush timeout even
+  with chunks left, because it can't outlive its tab. It tells the user
+  how many chunks are missing.
+
 ## 5. Permissions
 
 - **Backend host:** the hard-coded `localhost:5000` host permission is

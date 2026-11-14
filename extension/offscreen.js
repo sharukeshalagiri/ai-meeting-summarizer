@@ -18,9 +18,17 @@ import { IdbChunkStore } from "./lib/capture/uploadQueue.js";
 
 let capture = null;
 
+let currentSessionId = null;
+
+/**
+ * Every message names its session, so the worker can drop progress for
+ * a session that is already stopping (no stale write over Stop).
+ */
 const notify = (message) => {
   // No listener (popup closed) is normal; the worker always listens.
-  chrome.runtime.sendMessage(message).catch(() => undefined);
+  chrome.runtime
+    .sendMessage({ ...message, sessionId: currentSessionId })
+    .catch(() => undefined);
 };
 
 const openTabStream = (streamId) =>
@@ -31,6 +39,8 @@ const openTabStream = (streamId) =>
 
 const start = async ({ streamId, sessionId, apiBase, token }) => {
   if (capture) throw new Error("Already recording.");
+
+  currentSessionId = sessionId;
 
   const tab = await openTabStream(streamId);
   const mic = await getMicStream();
