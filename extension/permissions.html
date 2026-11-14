@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Allow microphone - Meeting AI Assistant</title>
+    <link rel="stylesheet" href="popup.css" />
+    <style>
+      body { width: auto; max-width: 520px; margin: 48px auto; padding: 0 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>Allow the microphone</h1>
+    <p>
+      The recorder puts <strong>your microphone on the left channel</strong> and
+      <strong>the meeting on the right</strong>, so the transcript knows which
+      lines are yours.
+    </p>
+    <p class="muted">
+      Chrome only asks once. The recorder runs in a hidden page that cannot show
+      a permission prompt, so it is granted here. Audio is only captured while
+      you are recording.
+    </p>
+    <button id="grant" type="button">Allow microphone</button>
+    <p id="result" role="status"></p>
+    <script type="module" src="permissions.js"></script>
+  </body>
+</html>
