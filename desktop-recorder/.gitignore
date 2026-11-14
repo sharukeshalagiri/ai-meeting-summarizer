@@ -17,3 +17,5 @@ dist/
 *.m4a
 queue/
 recordings/
+# PyInstaller writes this on every build; the command in README.md is the source.
+MeetingRecorder.spec

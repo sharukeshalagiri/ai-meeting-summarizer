@@ -25,7 +25,8 @@
     "worktree:env": "node scripts/worktree-env.mjs",
     "check:ownership": "node scripts/check-ownership.mjs",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
-    "bench:asr": "node scripts/benchmark-transcription.mjs"
+    "bench:asr": "node scripts/benchmark-transcription.mjs",
+    "test:desktop": "node desktop-recorder/run-tests.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.7"
