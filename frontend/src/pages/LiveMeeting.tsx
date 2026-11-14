@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import { useLiveCapture } from "../hooks/useLiveCapture";
+import {
+  MEETING_MODES,
+  parseHints,
+  type MeetingMode,
+} from "../lib/capture/contract";
+import type { ChannelLevel } from "../lib/capture/levels";
 import type { Platform } from "../types/meeting";
 
 const PLATFORMS: { value: Platform; label: string; hint: string }[] = [
@@ -28,26 +34,77 @@ const formatElapsed = (ms: number): string => {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 };
 
+/** One channel's level bar plus its 30 s silence warning. */
+function LevelMeter({
+  label,
+  channel,
+  off,
+}: {
+  label: string;
+  channel: ChannelLevel;
+  off?: boolean;
+}) {
+  return (
+    <div className="stack" style={{ gap: 4, minWidth: 160 }}>
+      <span className="muted tiny">
+        {label}
+        {off ? " (off)" : channel.silent ? " (silent for 30 s)" : ""}
+      </span>
+      <div
+        role="meter"
+        aria-label={`${label} level`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(channel.level * 100)}
+        style={{
+          height: 6,
+          borderRadius: 3,
+          background: "rgba(127,127,127,0.25)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${off ? 0 : Math.round(channel.level * 100)}%`,
+            height: "100%",
+            background: channel.silent ? "#b45309" : "#16a34a",
+            transition: "width 120ms linear",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function LiveMeeting() {
   const navigate = useNavigate();
 
   const {
     status,
     error,
+    warning,
     meeting,
     lines,
     elapsedMs,
     chunksSent,
     pendingChunks,
+    retryReason,
     rollingCount,
+    levels,
+    hasMic,
+    micEnabled,
+    setMicEnabled,
     isRecording,
     start,
     stop,
     clearError,
+    clearWarning,
   } = useLiveCapture();
 
   const [title, setTitle] = useState("");
   const [platform, setPlatform] = useState<Platform>("GOOGLE_MEET");
+  const [mode, setMode] = useState<MeetingMode>("AUTO");
+  const [hintsText, setHintsText] = useState("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -96,14 +153,16 @@ function LiveMeeting() {
     await start({
       title: title.trim() || "Live meeting",
       platform,
+      mode,
+      hints: parseHints(hintsText),
     });
   };
 
   const handleStop = async () => {
     const ended = await stop();
 
-    // The report is ready by the time stop() resolves, so go straight
-    // to it rather than making the user find the meeting.
+    // /end has been accepted; MeetingDetails shows the report (or its
+    // progress while the summary is still being generated).
     if (ended && meeting) {
       navigate(`/meeting/${meeting.id}`);
     }
@@ -129,6 +188,20 @@ function LiveMeeting() {
             className="ghost sm"
             onClick={clearError}
             aria-label="Dismiss error"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {warning && (
+        <div role="status" className="alert">
+          <span>{warning}</span>
+          <button
+            type="button"
+            className="ghost sm"
+            onClick={clearWarning}
+            aria-label="Dismiss warning"
           >
             Dismiss
           </button>
@@ -175,6 +248,37 @@ function LiveMeeting() {
             </div>
           </fieldset>
 
+          <div className="field">
+            <label htmlFor="live-mode">Meeting type</label>
+            <select
+              id="live-mode"
+              value={mode}
+              onChange={(event) => setMode(event.target.value as MeetingMode)}
+              disabled={status === "requesting"}
+            >
+              {MEETING_MODES.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="live-hints">Names and terms (optional)</label>
+            <textarea
+              id="live-hints"
+              rows={2}
+              placeholder="Priya, Kubernetes, Q3 roadmap"
+              value={hintsText}
+              onChange={(event) => setHintsText(event.target.value)}
+              disabled={status === "requesting"}
+            />
+            <span className="muted tiny">
+              Comma-separated. Helps spell names and jargon correctly.
+            </span>
+          </div>
+
           <div className="callout">
             <strong>Before you start</strong>
             <ol className="tight-list">
@@ -187,6 +291,11 @@ function LiveMeeting() {
                 Turn on <strong>Also share tab audio</strong>. Without
                 it there is no audio to transcribe.
               </li>
+              <li>
+                Allow the microphone so your own voice is recorded on its
+                own channel.
+              </li>
+              <li>Let everyone in the call know it is being recorded.</li>
             </ol>
           </div>
 
@@ -233,7 +342,11 @@ function LiveMeeting() {
                 <p className="muted tiny">
                   {formatElapsed(elapsedMs)} captured &middot;{" "}
                   {chunksSent} chunk{chunksSent === 1 ? "" : "s"}
-                  {pendingChunks > 0 && ` · ${pendingChunks} uploading`}
+                  {pendingChunks > 0 &&
+                    ` · ${pendingChunks} chunk${
+                      pendingChunks === 1 ? "" : "s"
+                    } waiting`}
+                  {pendingChunks > 0 && retryReason && ` (${retryReason})`}
                   {rollingCount > 0 &&
                     ` · ${rollingCount} live summar${
                       rollingCount === 1 ? "y" : "ies"
@@ -241,6 +354,26 @@ function LiveMeeting() {
                 </p>
               </div>
             </div>
+
+            {isRecording && (
+              <div className="actions" style={{ alignItems: "flex-end" }}>
+                <LevelMeter
+                  label="You (mic)"
+                  channel={levels.mic}
+                  off={!micEnabled}
+                />
+                <LevelMeter label="Meeting (tab)" channel={levels.tab} />
+                <button
+                  type="button"
+                  className="secondary sm"
+                  onClick={() => setMicEnabled(!micEnabled)}
+                  disabled={!hasMic}
+                  aria-pressed={micEnabled}
+                >
+                  {!hasMic ? "No mic" : micEnabled ? "Mute mic" : "Unmute mic"}
+                </button>
+              </div>
+            )}
 
             <div className="actions">
               {isRecording && (
@@ -266,6 +399,23 @@ function LiveMeeting() {
               )}
             </div>
           </div>
+
+          {isRecording && (levels.mic.silent || levels.tab.silent) && (
+            <div role="status" className="callout">
+              {levels.tab.silent && (
+                <p>
+                  No meeting audio for 30 s. Check that the shared tab is
+                  the call and that &quot;Also share tab audio&quot; was on.
+                </p>
+              )}
+              {levels.mic.silent && (
+                <p>
+                  Your microphone has been silent for 30 s. Check that the
+                  right mic is selected and not muted in the system.
+                </p>
+              )}
+            </div>
+          )}
 
           <section>
             <h2>Live transcript</h2>
