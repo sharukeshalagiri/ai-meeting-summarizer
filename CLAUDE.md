@@ -39,6 +39,9 @@ a command you can run.**
 - **(b)** Merging any PR, or pushing to `main`.
 - **(c)** Schema or migration changes (`backend/prisma/**`).
 - **(d)** Deleting files, branches, worktrees, databases or data.
+  **Exception:** you may delete an uncommitted scratch file that your
+  own session created, without asking. Anything committed, or created
+  by someone else, still goes through this gate.
 - **(e)** Anything involving accounts, API keys, costs, public releases,
   GitHub settings, or other people's data.
 - **(f)** A real-world test only the user can do: a live Meet/Zoom call,
