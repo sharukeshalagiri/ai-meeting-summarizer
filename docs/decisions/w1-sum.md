@@ -116,3 +116,29 @@ sorts open → due date → undated and flags overdue items.
 5. `frontend/src/types/meeting.ts`: `Summary.data` could be typed as
    `StructuredSummary | SummaryV2`; not required, `SummaryView` detects
    it at runtime.
+
+## Real-model results (2026-11-14, gate D4)
+
+Run once over the two synthetic fixtures with `modeSetting: AUTO`,
+meeting start 2026-11-09 15:00 UTC, timezone America/New_York.
+`gemini-flash-latest` (classify/extract/verify) and
+`gemini-flash-lite-latest` (CLEAN). **14 Gemini calls in total**: 10 in
+the first run (project-meeting 5 incl. one 503 retry; lecture 5 that
+ended in a 503 "high demand" after retries) and 4 in a lecture-only
+rerun.
+
+| Fixture | Mode detected | mustAppear found | Wrong evidence | Wrong owner/date | mustNotAppear hits | Invalid evidence idx |
+| --- | --- | --- | --- | --- | --- | --- |
+| project-meeting | PROJECT (1.0) | 7 / 7 | 0 | 0 | 0 | 0 |
+| lecture | LECTURE (1.0) | 4 / 4 | 0 | 0 | 0 | 0 |
+
+- CLEAN kept 20 of 28 project segments and 17 of 21 lecture segments as
+  substantive; nothing from the small talk reached the summary.
+- Both lecturer-flagged exam questions were found (chaining vs open
+  addressing; amortized cost of doubling).
+- Project deadlines resolved in code: "by Friday" → 2026-11-13, "by the
+  end of next week" → 2026-11-20, "tomorrow" → 2026-11-10; tasks with no
+  spoken deadline stay null. No item fell below the review threshold.
+- Latency was high (about 5 to 9 minutes per fixture) because of Gemini
+  503 retries during a demand spike. That is why re-summarize is a
+  10-minute request today; w3-jobs should move it to a background job.
