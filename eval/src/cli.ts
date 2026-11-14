@@ -30,6 +30,9 @@ const value = (name: string) => {
 };
 
 const readJson = <T>(file: string): T => JSON.parse(fs.readFileSync(file, "utf8")) as T;
+
+/** Paths from the command line are relative to where npm was run, not eval/. */
+const userPath = (p: string) => path.resolve(process.env.INIT_CWD ?? process.cwd(), p);
 const writeJson = (file: string, data: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
@@ -117,7 +120,7 @@ async function runCommand() {
   let run: RunResult;
   if (replay) {
     // Re-score a stored run with today's scoring code: zero Gemini calls.
-    run = readJson<RunResult>(path.resolve(replay));
+    run = readJson<RunResult>(userPath(replay));
     for (const result of run.cases) {
       const c = loaded.find((l) => l.entry.id === result.id);
       if (!c?.key || !c.segments || (result.status !== "OK" && result.status !== "PIPELINE_ERROR")) continue;
@@ -168,7 +171,7 @@ function emptyCalls() {
 }
 
 function checkCommand(): number {
-  const file = value("report") ?? latestReport();
+  const file = value("report") ? userPath(value("report")!) : latestReport();
   const report = readJson<{ metrics: Metrics }>(file);
   const comparisons = compare(report.metrics, loadBaseline());
   for (const c of comparisons) {
@@ -182,7 +185,7 @@ function checkCommand(): number {
 function acceptCommand(): number {
   const note = value("note");
   if (!note) throw new Error('eval:accept needs --note "why the baseline changes".');
-  const file = value("report") ?? latestReport();
+  const file = value("report") ? userPath(value("report")!) : latestReport();
   const report = readJson<{ report: string; metrics: Metrics }>(file);
   const outcome = checkOutcome(report.metrics, []);
   if (outcome.exit !== 0) throw new Error(`Refusing to accept an inconclusive run. ${outcome.summary}`);
