@@ -26,7 +26,8 @@
     "check:ownership": "node scripts/check-ownership.mjs",
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:web": "npm --prefix frontend test",
-    "bench:asr": "node scripts/benchmark-transcription.mjs"
+    "bench:asr": "node scripts/benchmark-transcription.mjs",
+    "test:desktop": "node desktop-recorder/run-tests.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.7"

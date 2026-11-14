@@ -1,0 +1,3 @@
+# Tests only: no device or tray packages.
+-r requirements-core.txt
+pytest>=8.0
