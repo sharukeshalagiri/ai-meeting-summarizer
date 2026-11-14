@@ -1,4 +1,8 @@
 fastapi
 uvicorn
-openai-whisper
+faster-whisper
+# faster-whisper 1.2.1 calls av.open(metadata_errors=...), which PyAV 19
+# removed ("unexpected keyword argument"). Drop the pin once it is fixed.
+av<19
+numpy
 python-multipart
