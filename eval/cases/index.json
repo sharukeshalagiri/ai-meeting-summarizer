@@ -1,0 +1,19 @@
+{
+  "description": "The evaluation cases, in run order (priority). Synthetic and generated cases are committed; ami and own cases point at gitignored data. meetingStart/timezone anchor relative deadlines; 2026-11-09 is a Monday.",
+  "defaults": { "meetingStart": "2026-11-09T15:00:00Z", "timezone": "America/New_York" },
+  "cases": [
+    { "id": "project-meeting", "type": "synthetic", "key": "project-meeting.expected.json", "smoke": true },
+    { "id": "no-tasks", "type": "synthetic", "key": "no-tasks.expected.json", "smoke": true },
+    { "id": "lecture", "type": "synthetic", "key": "lecture.expected.json" },
+    { "id": "interview-interviewer", "type": "synthetic", "key": "interview-interviewer.expected.json" },
+    { "id": "interview-candidate", "type": "synthetic", "key": "interview-candidate.expected.json" },
+    { "id": "one-on-one", "type": "synthetic", "key": "one-on-one.expected.json" },
+    { "id": "noisy-smalltalk", "type": "synthetic", "key": "noisy-smalltalk.expected.json" },
+    { "id": "long-90min", "type": "generated", "generator": "eval-gen-long" },
+    { "id": "ami-ES2004a", "type": "ami", "meeting": "ES2004a" },
+    { "id": "ami-IS1009a", "type": "ami", "meeting": "IS1009a" },
+    { "id": "ami-TS3003a", "type": "ami", "meeting": "TS3003a" },
+    { "id": "ami-ES2011a", "type": "ami", "meeting": "ES2011a" },
+    { "id": "ami-IS1008a", "type": "ami", "meeting": "IS1008a" }
+  ]
+}

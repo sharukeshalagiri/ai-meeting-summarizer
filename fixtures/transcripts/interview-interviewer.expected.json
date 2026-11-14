@@ -1,0 +1,98 @@
+{
+  "transcript": "interview-interviewer.json",
+  "mode": "interview",
+  "description": "Engineering interview recorded by the interviewer (Dana): two technical questions, one behavioural question, a weak answer on database indexes, the interviewer's follow-up task, and small talk about traffic and a dog.",
+  "me": "Dana",
+  "mustAppear": [
+    {
+      "id": "qa-rate-limiter",
+      "kind": "qa",
+      "match": [
+        "rate limiter"
+      ],
+      "evidenceStartMs": [
+        19400
+      ]
+    },
+    {
+      "id": "qa-slow-query",
+      "kind": "qa",
+      "match": [
+        "orders"
+      ],
+      "evidenceStartMs": [
+        57200
+      ]
+    },
+    {
+      "id": "qa-disagreement",
+      "kind": "qa",
+      "match": [
+        "disagreed"
+      ],
+      "evidenceStartMs": [
+        85200
+      ]
+    },
+    {
+      "id": "concern-indexes",
+      "kind": "concern",
+      "match": [
+        "index"
+      ],
+      "evidenceStartMs": [
+        65600,
+        79000
+      ]
+    },
+    {
+      "id": "strength-token-bucket",
+      "kind": "strength",
+      "match": [
+        "token bucket"
+      ],
+      "evidenceStartMs": [
+        26600
+      ]
+    },
+    {
+      "id": "task-feedback-committee",
+      "kind": "actionItem",
+      "match": [
+        "feedback"
+      ],
+      "owner": "Dana",
+      "dueDate": "Thursday",
+      "dueResolved": "2026-11-12",
+      "evidenceStartMs": [
+        108800
+      ]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-traffic",
+      "kind": "any",
+      "match": [
+        "traffic"
+      ],
+      "reason": "Small talk about the commute."
+    },
+    {
+      "id": "smalltalk-dog",
+      "kind": "any",
+      "match": [
+        "biscuit"
+      ],
+      "reason": "Small talk about the candidate's dog."
+    },
+    {
+      "id": "not-a-strength-memory",
+      "kind": "strength",
+      "match": [
+        "more memory"
+      ],
+      "reason": "Adding memory was the weak answer, not a strength."
+    }
+  ]
+}

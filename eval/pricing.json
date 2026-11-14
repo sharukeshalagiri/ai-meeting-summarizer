@@ -1,0 +1,9 @@
+{
+  "asOf": "2026-11-14",
+  "currency": "USD",
+  "note": "Paid-tier list prices per million tokens, entered by hand; check https://ai.google.dev/gemini-api/docs/pricing and update before quoting a cost. Thinking tokens are billed as output. The free tier costs nothing but is rate limited. A model missing here makes the cost n/a rather than wrong.",
+  "models": {
+    "gemini-flash-latest": { "inputPerMTok": 0.3, "outputPerMTok": 2.5 },
+    "gemini-flash-lite-latest": { "inputPerMTok": 0.1, "outputPerMTok": 0.4 }
+  }
+}

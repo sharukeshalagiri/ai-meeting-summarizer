@@ -1,0 +1,122 @@
+[
+  {
+    "speaker": "Dana",
+    "text": "Hi Ravi, thanks for coming in. Did you find the office alright?",
+    "startMs": 0,
+    "endMs": 4600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Yes, though the traffic on the bridge was terrible this morning.",
+    "startMs": 5000,
+    "endMs": 9200
+  },
+  {
+    "speaker": "Dana",
+    "text": "It always is on Mondays. Is that your dog barking in the background earlier on the call?",
+    "startMs": 9600,
+    "endMs": 16000
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Ha, yes, that's Biscuit, sorry about that.",
+    "startMs": 16400,
+    "endMs": 19000
+  },
+  {
+    "speaker": "Dana",
+    "text": "No problem. Let's get started. First question: how would you design a rate limiter for a public API?",
+    "startMs": 19400,
+    "endMs": 26200
+  },
+  {
+    "speaker": "Ravi",
+    "text": "I'd use a token bucket per API key, stored in Redis, so every instance of the service shares the same counters.",
+    "startMs": 26600,
+    "endMs": 34600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Each request takes a token, tokens refill at a fixed rate, and when the bucket is empty we return a 429 with a Retry-After header.",
+    "startMs": 35000,
+    "endMs": 44600
+  },
+  {
+    "speaker": "Dana",
+    "text": "Good. What happens if Redis goes down?",
+    "startMs": 45000,
+    "endMs": 47600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "I'd fail open with a local in-memory limit as a fallback, so an outage of the limiter doesn't take the whole API down.",
+    "startMs": 48000,
+    "endMs": 56800
+  },
+  {
+    "speaker": "Dana",
+    "text": "Okay. Second question: a query on the orders table got slow as the table grew. How would you speed it up?",
+    "startMs": 57200,
+    "endMs": 65200
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Hmm, I'm honestly not sure. Maybe add more memory to the database server? I haven't worked much with database indexes.",
+    "startMs": 65600,
+    "endMs": 73200
+  },
+  {
+    "speaker": "Dana",
+    "text": "Would an index on the customer id column help here, do you think?",
+    "startMs": 73600,
+    "endMs": 78600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "I think so, but I couldn't really explain how an index changes the query plan.",
+    "startMs": 79000,
+    "endMs": 84800
+  },
+  {
+    "speaker": "Dana",
+    "text": "That's fine. Last one: tell me about a time you disagreed with a teammate.",
+    "startMs": 85200,
+    "endMs": 90600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "On my last team we disagreed about rewriting a service. I wrote a one-page comparison of both options and we agreed to refactor instead of rewriting.",
+    "startMs": 91000,
+    "endMs": 100800
+  },
+  {
+    "speaker": "Dana",
+    "text": "Nice, that's a clear example of resolving conflict with data.",
+    "startMs": 101200,
+    "endMs": 105000
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Thanks. Can I ask when I'll hear back?",
+    "startMs": 105400,
+    "endMs": 108400
+  },
+  {
+    "speaker": "Dana",
+    "text": "I'll send my feedback to the hiring committee by Thursday, and the recruiter will contact you after that.",
+    "startMs": 108800,
+    "endMs": 115600
+  },
+  {
+    "speaker": "Ravi",
+    "text": "Great, thank you for your time.",
+    "startMs": 116000,
+    "endMs": 118400
+  },
+  {
+    "speaker": "Dana",
+    "text": "Thanks Ravi, enjoy the rest of your day.",
+    "startMs": 118800,
+    "endMs": 121800
+  }
+]

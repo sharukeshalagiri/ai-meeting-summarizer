@@ -1,0 +1,110 @@
+[
+  {
+    "speaker": "Grace",
+    "text": "Hey Sam, how did the marathon go on Sunday?",
+    "startMs": 0,
+    "endMs": 3400
+  },
+  {
+    "speaker": "Sam",
+    "text": "I finished! Slower than I hoped, but my knees survived.",
+    "startMs": 3800,
+    "endMs": 7600
+  },
+  {
+    "speaker": "Grace",
+    "text": "Congrats, that's huge. Okay, let's start with feedback from the launch.",
+    "startMs": 8000,
+    "endMs": 12200
+  },
+  {
+    "speaker": "Grace",
+    "text": "Your incident write-up last week was excellent. The timeline was clear and the follow-ups were concrete.",
+    "startMs": 12600,
+    "endMs": 18600
+  },
+  {
+    "speaker": "Sam",
+    "text": "Thanks, that took a while. I wasn't sure it was too long.",
+    "startMs": 19000,
+    "endMs": 23600
+  },
+  {
+    "speaker": "Grace",
+    "text": "It was the right length. One thing to work on: speak up earlier in design reviews when you see a risk, instead of after the meeting.",
+    "startMs": 24000,
+    "endMs": 33800
+  },
+  {
+    "speaker": "Sam",
+    "text": "Fair. I'll try to raise concerns in the review itself.",
+    "startMs": 34200,
+    "endMs": 38000
+  },
+  {
+    "speaker": "Grace",
+    "text": "Next topic. We talked about you moving to the platform team. I talked to their lead and it's confirmed: you'll move to the platform team in January.",
+    "startMs": 38400,
+    "endMs": 48600
+  },
+  {
+    "speaker": "Sam",
+    "text": "That's great news, thank you.",
+    "startMs": 49000,
+    "endMs": 51400
+  },
+  {
+    "speaker": "Grace",
+    "text": "Before you go, I'd like a design doc for the caching layer so the current team can carry it on.",
+    "startMs": 51800,
+    "endMs": 59400
+  },
+  {
+    "speaker": "Sam",
+    "text": "I'll write the caching design doc by next Monday.",
+    "startMs": 59800,
+    "endMs": 63200
+  },
+  {
+    "speaker": "Grace",
+    "text": "Good. And on my side, I'll approve your conference budget by Friday.",
+    "startMs": 63600,
+    "endMs": 68200
+  },
+  {
+    "speaker": "Sam",
+    "text": "Thanks. One question I had: does the promotion cycle count work from the fourth quarter, or only up to September?",
+    "startMs": 68600,
+    "endMs": 76200
+  },
+  {
+    "speaker": "Grace",
+    "text": "Honestly, I don't know yet. HR hasn't published the rules, so let's keep that open.",
+    "startMs": 76600,
+    "endMs": 82400
+  },
+  {
+    "speaker": "Sam",
+    "text": "Okay. Also, maybe someday I'd like to look into Kotlin for the mobile app, but no rush.",
+    "startMs": 82800,
+    "endMs": 89200
+  },
+  {
+    "speaker": "Grace",
+    "text": "Let's park that for now, it's not a priority this quarter.",
+    "startMs": 89600,
+    "endMs": 93800
+  },
+  {
+    "speaker": "Grace",
+    "text": "Anything else on your mind?",
+    "startMs": 94200,
+    "endMs": 96600
+  },
+  {
+    "speaker": "Sam",
+    "text": "No, that's it. Thanks Grace.",
+    "startMs": 97000,
+    "endMs": 99400
+  }
+]

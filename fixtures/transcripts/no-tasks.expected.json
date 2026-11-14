@@ -1,0 +1,49 @@
+{
+  "transcript": "no-tasks.json",
+  "mode": "general",
+  "description": "Quarterly metrics read-out with discussion but no tasks: one decision (retro becomes monthly), one open question, and an ownerless 'someone should' that must not become a task.",
+  "counts": {
+    "actionItem": 0
+  },
+  "mustAppear": [
+    {
+      "id": "decision-monthly-retro",
+      "kind": "decision",
+      "match": [
+        "retro",
+        "monthly"
+      ],
+      "evidenceStartMs": [
+        47400
+      ]
+    },
+    {
+      "id": "question-mobile-dip",
+      "kind": "openQuestion",
+      "match": [
+        "mobile"
+      ],
+      "evidenceStartMs": [
+        55600
+      ]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "not-a-task-dashboard",
+      "kind": "actionItem",
+      "match": [
+        "dashboard"
+      ],
+      "reason": "'Someone should, at some point': no owner, explicitly not now."
+    },
+    {
+      "id": "not-a-task-readout",
+      "kind": "actionItem",
+      "match": [
+        "read-out"
+      ],
+      "reason": "The read-out needs no action."
+    }
+  ]
+}
