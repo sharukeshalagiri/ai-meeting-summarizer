@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { API_BASE } from "./tests/mockApi";
 
 /**
  * One chromium, one worker: the suite is small and the dev machine has
@@ -28,7 +29,7 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       // Port 9 (discard): any request a test forgot to mock fails fast.
-      VITE_API_URL: "http://127.0.0.1:9/api",
+      VITE_API_URL: API_BASE,
       VITE_DEVICE_TOKEN: "",
     },
   },

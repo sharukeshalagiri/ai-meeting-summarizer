@@ -9,6 +9,13 @@ import type { Page, Route } from "@playwright/test";
 
 export const MEETING_ID = "e2e-meeting-1";
 
+/**
+ * The API origin the frontend is built with (playwright.config.ts). Only
+ * this origin is intercepted: a looser pattern such as //api// would
+ * also catch Vite serving the module /src/api/api.ts.
+ */
+export const API_BASE = "http://127.0.0.1:9/api";
+
 const now = "2026-11-09T15:00:00.000Z";
 const evidence = (idx: number, speaker: string, startMs: number) => [{ idx, speaker, startMs }];
 const sourced = (idx: number, speaker: string, startMs: number) => ({ evidence: evidence(idx, speaker, startMs), confidence: 0.9, needsReview: false });
@@ -98,15 +105,24 @@ export const mockApi = async (page: Page, options: MockOptions) => {
     actionItems: summarized ? [actionItemRow] : [],
   });
 
-  const ok = (route: Route, data: unknown, status = 200) =>
-    route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ success: true, message: "OK", data }) });
-  const fail = (route: Route, status: number, message: string) =>
-    route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ success: false, message, data: null }) });
+  // The page (localhost) and the mocked API (127.0.0.1:9) are different
+  // origins, so the browser applies CORS to fulfilled responses too.
+  const headers = {
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+    "access-control-allow-headers": "*",
+  };
 
-  await page.route(/\/api\//, async (route) => {
+  const ok = (route: Route, data: unknown, status = 200) =>
+    route.fulfill({ status, headers, contentType: "application/json", body: JSON.stringify({ success: true, message: "OK", data }) });
+  const fail = (route: Route, status: number, message: string) =>
+    route.fulfill({ status, headers, contentType: "application/json", body: JSON.stringify({ success: false, message, data: null }) });
+
+  await page.route(`${API_BASE}/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const apiPath = url.pathname.replace(/^.*?\/api/, "");
+    const apiPath = url.pathname.replace(/^\/api/, "");
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers });
     const key = `${request.method()} ${apiPath}`;
     calls.push(key);
     const base = `/meetings/${MEETING_ID}`;
@@ -130,7 +146,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
       case `GET ${base}/summary-review`:
         return ok(route, { modeSetting: "PROJECT", summaryMode: "PROJECT", detectedMode: null, actionItems: summarized ? [actionItemRow] : [] });
       case `GET ${base}/audio`:
-        return route.fulfill({ status: 404, body: "" });
+        return route.fulfill({ status: 404, headers, body: "" });
       default:
         // Lists and anything else the pages may ask for: empty, not an error.
         return request.method() === "GET" ? ok(route, []) : fail(route, 404, `unmocked ${key}`);
