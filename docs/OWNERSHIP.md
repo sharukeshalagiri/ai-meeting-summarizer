@@ -54,6 +54,9 @@ go up to 89. The main checkout keeps the defaults (5000 / 5173 / 8000).
 | w2-bot | 7 | 5170 | 5171 | shared :8000 |
 | w3-jobs | 8 | 5180 | 5181 | shared :8000 |
 | w3-infra | 9 | 5190 | 5191 | shared :8000 |
+| w4-acct | 10 | 5200 | 5201 | shared :8000 |
+| w5-demo | 11 | 5210 | 5211 | shared :8000 |
+| w5-acc | 12 | 5220 | 5221 | shared :8000 |
 
 Tracks that own files under `ai-service/` run their own ai-service.
 Everyone else uses the main checkout's on port 8000 (start it there with
@@ -64,6 +67,11 @@ Everyone else uses the main checkout's on port 8000 (start it there with
 - `backend/src/services/live.service.ts` is owned by **w2-spk** and
   **w3-jobs**. They are in different waves, so they never run at the same
   time; w3-jobs rebases on whatever w2-spk merged.
+- **w4-acct** has broad backend ownership (middleware, repositories,
+  controllers, routes) because it scopes every query by user. It runs
+  alone (no other track in parallel). w5-demo and w5-acc run after it
+  and do not overlap each other. w3-jobs and w5-acc both list
+  `w1-sum.service.ts`; they run in different steps.
 - Files no track owns (for example `frontend/src/api/api.ts`,
   `backend/src/controllers/meeting.controller.ts`, `backend/src/lib/gemini.ts`)
   change only through "Requests for other tracks" in a PR. The integrator
@@ -139,10 +147,73 @@ w3-jobs slot=8
   backend/src/lib/storage/**
   frontend/src/components/progress/**
   frontend/src/pages/MeetingDetails.tsx
+  backend/src/repositories/liveChunk.repository.ts
+  backend/src/repositories/meeting.repository.ts
+  backend/src/services/w1-sum.service.ts
+  backend/src/controllers/meeting.controller.ts
 
 w3-infra slot=9
   **/Dockerfile*
   deploy/**
   docker-compose.prod.yml
   .github/workflows/release*.yml
+
+w4-acct slot=10
+  backend/src/middleware/**
+  backend/src/repositories/**
+  backend/src/controllers/**
+  backend/src/routes/**
+  backend/src/services/meeting.service.ts
+  backend/src/services/user.service.ts
+  backend/src/services/search.service.ts
+  backend/src/services/analytics.service.ts
+  backend/src/services/auth/**
+  backend/src/services/account/**
+  backend/src/services/export/**
+  backend/src/services/series/**
+  backend/src/services/retention/**
+  backend/src/lib/auth/**
+  backend/scripts/**
+  frontend/src/api/api.ts
+  frontend/src/lib/auth/**
+  frontend/src/components/Layout.tsx
+  frontend/src/components/account/**
+  frontend/src/components/export/**
+  frontend/src/components/series/**
+  frontend/src/pages/Login.tsx
+  frontend/src/pages/Settings.tsx
+  frontend/src/pages/Devices.tsx
+  frontend/src/pages/Prep.tsx
+  frontend/src/pages/Ask.tsx
+  frontend/src/pages/MeetingDetails.tsx
+  frontend/src/components/summary/**
+  backend/src/services/live.service.ts
+  backend/src/services/speech.service.ts
+  backend/src/services/w1-sum.service.ts
+  backend/src/lib/dates/**
+
+w5-demo slot=11
+  backend/src/demo/**
+  backend/src/middleware/rateLimit*
+  backend/src/middleware/demo*
+  demo/**
+  frontend/src/components/demo/**
+  frontend/src/pages/Login.tsx
+  README.md
+  docs/DEMO_SCRIPT.md
+  docs/images/**
+  scripts/readme*
+  scripts/screenshots*
+  e2e/screenshots/**
+
+w5-acc slot=12
+  backend/src/prompts/**
+  backend/src/services/w1-sum.service.ts
+  backend/src/services/w1-sum.parsers.ts
+  backend/src/services/summary.service.ts
+  backend/src/services/speech.service.ts
+  backend/src/services/speakers/matcher.ts
+  backend/src/lib/hints/**
+  eval/reports/**
+  eval/baseline.json
 ```

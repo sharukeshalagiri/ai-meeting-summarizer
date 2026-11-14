@@ -60,6 +60,7 @@ describe("parseOwnership", () => {
     assert.deepEqual([...tracks.keys()], [
       "w1-ext", "w1-desk", "w1-asr", "w1-sum",
       "w2-spk", "w2-eval", "w2-bot", "w3-jobs", "w3-infra",
+      "w4-acct", "w5-demo", "w5-acc",
     ]);
     assert.equal(tracks.get("w1-asr").slot, 3);
     assert.deepEqual(tracks.get("w1-asr").excludes, ["ai-service/diarization/**"]);
