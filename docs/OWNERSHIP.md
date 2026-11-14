@@ -81,6 +81,8 @@ Everyone else uses the main checkout's on port 8000 (start it there with
   **/package.json
   **/package-lock.json
   **/.env.example
+  .gitignore
+  ai-service/requirements.txt
 
 w1-ext slot=1
   extension/**
@@ -113,6 +115,7 @@ w2-spk slot=5
   backend/src/services/diarization.service.ts
   backend/src/services/speakers/**
   backend/src/services/live.service.ts
+  backend/src/repositories/speakerProfile.repository.ts
   ai-service/diarization/**
   frontend/src/components/TranscriptView.tsx
   frontend/src/components/transcript/**
