@@ -1,0 +1,106 @@
+:root {
+  --bg: #ffffff;
+  --fg: #111827;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --accent: #4f46e5;
+  --danger: #b91c1c;
+  --ok: #15803d;
+  --warn: #b45309;
+  --field: #f9fafb;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111827;
+    --fg: #f3f4f6;
+    --muted: #9ca3af;
+    --line: #374151;
+    --field: #1f2937;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 14px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+h1 { font-size: 15px; margin: 0 0 8px; }
+h2 { font-size: 13px; margin: 12px 0 6px; }
+p { margin: 6px 0; }
+
+.muted { color: var(--muted); }
+.tiny { font-size: 11px; }
+.ok { color: var(--ok); }
+.error { color: var(--danger); }
+.warn { color: var(--warn); }
+.hidden { display: none !important; }
+
+.row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.stack > * + * { margin-top: 8px; }
+
+label { display: block; font-weight: 600; margin-bottom: 2px; }
+
+input, select, textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--fg);
+  font: inherit;
+}
+
+textarea { resize: vertical; }
+
+button {
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.55; cursor: default; }
+button.danger { background: var(--danger); }
+button.secondary { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+button.block { width: 100%; }
+
+.notice {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--field);
+}
+
+.timer { font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+.rec-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+  margin-right: 6px;
+  animation: pulse 1.4s infinite;
+}
+
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+.meter { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: var(--ok); transition: width 120ms linear; }
+.meter.silent > div { background: var(--warn); }
+
+details > summary { cursor: pointer; font-weight: 600; margin-top: 12px; }
+
+a { color: var(--accent); }

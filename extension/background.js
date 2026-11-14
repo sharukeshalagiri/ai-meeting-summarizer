@@ -1,33 +1,47 @@
+import { createCaptureClient } from "./lib/capture/contract.js";
+import { IdbChunkStore, UploadQueue } from "./lib/capture/uploadQueue.js";
 import {
+  STOP_FLUSH_MS,
   clearSession,
   detectPlatform,
-  getApiBase,
+  getPendingEnds,
   getSession,
+  getSettings,
+  hasBackendPermission,
   isInMeeting,
+  isZoomLaunchPage,
+  setPendingEnds,
   setSession,
 } from "./shared.js";
 
 /**
- * Service worker: owns session lifecycle and talks to the backend.
+ * Service worker: owns the session lifecycle and talks to the backend
+ * (capture contract, docs/CAPTURE_CONTRACT.md).
  *
- * It cannot record audio itself — MV3 service workers have no
- * MediaRecorder and no DOM — so capture happens in an offscreen
- * document, which this worker creates and drives. See EXTENSION.md.
+ * It cannot record audio (MV3 workers have no MediaRecorder and no DOM),
+ * so recording happens in an offscreen document that this worker
+ * creates. The offscreen document uploads chunks while it lives; chunks
+ * it could not upload stay in IndexedDB and this worker drains them on
+ * an alarm, then calls /end. See extension/README.md.
  */
 
 const OFFSCREEN_PATH = "offscreen.html";
+const DRAIN_ALARM = "drain-chunks";
+
+const ZOOM_LAUNCH_MESSAGE =
+  "Click 'Join from your browser' to record here, or use the desktop recorder.";
+
+const clientFor = (settings) =>
+  createCaptureClient({ apiBase: settings.apiBase, token: settings.deviceToken });
 
 /** Chrome allows exactly one offscreen document per extension. */
 const ensureOffscreen = async () => {
-  const existing = await chrome.offscreen.hasDocument();
-
-  if (existing) return;
+  if (await chrome.offscreen.hasDocument()) return;
 
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_PATH,
     reasons: ["USER_MEDIA"],
-    justification:
-      "Recording tab audio to transcribe the meeting.",
+    justification: "Recording the meeting tab and microphone for transcription.",
   });
 };
 
@@ -37,165 +51,357 @@ const closeOffscreen = async () => {
   }
 };
 
-/** Badge doubles as the recording indicator on the toolbar icon. */
+/** The badge is the recording indicator on the toolbar icon. */
 const setBadge = (text, color = "#b91c1c") => {
   void chrome.action.setBadgeText({ text });
   void chrome.action.setBadgeBackgroundColor({ color });
 };
 
-const post = async (path, body) => {
-  const base = await getApiBase();
-
-  const response = await fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok || !payload?.success) {
-    throw new Error(
-      payload?.message ?? `Request failed (${response.status})`
-    );
-  }
-
-  return payload.data;
-};
-
-const startCapture = async (tabId) => {
-  const tab = await chrome.tabs.get(tabId);
-
-  const detected = detectPlatform(tab.url);
-
-  // getMediaStreamId must be called from the worker; the offscreen
-  // document cannot obtain one for a tab by itself.
-  const streamId = await chrome.tabCapture.getMediaStreamId({
-    targetTabId: tabId,
-  });
-
-  const data = await post("/live/sessions", {
-    title: tab.title?.trim() || "Browser meeting",
-    platform: detected?.platform ?? "OTHER",
-  });
-
-  const session = {
-    sessionId: data.session.id,
-    meetingId: data.meeting.id,
-    tabId,
-    apiBase: await getApiBase(),
-    title: tab.title ?? "",
-    platform: detected?.label ?? "Browser",
-    startedAt: Date.now(),
-    chunkCount: 0,
-    elapsedMs: 0,
-  };
-
-  await setSession(session);
-
-  await ensureOffscreen();
-
-  // The offscreen document may still be booting; retrying covers the
-  // window before its message listener is registered.
-  await sendToOffscreen({
-    type: "START",
-    streamId,
-    sessionId: session.sessionId,
-    apiBase: session.apiBase,
-  });
-
-  setBadge("REC");
-
-  return session;
-};
-
-const sendToOffscreen = async (message, attempts = 5) => {
-  for (let attempt = 0; attempt < attempts; attempt++) {
+/**
+ * Messages for the offscreen document carry target: "offscreen", since
+ * runtime.sendMessage reaches every extension page. Retries cover the
+ * moment before a freshly created document registers its listener.
+ */
+const sendToOffscreen = async (message, attempts = 10) => {
+  for (let attempt = 0; ; attempt++) {
     try {
-      return await chrome.runtime.sendMessage(message);
+      const reply = await chrome.runtime.sendMessage({ ...message, target: "offscreen" });
+
+      if (reply === undefined) throw new Error("Offscreen document not ready");
+      if (!reply.ok) {
+        const failure = new Error(reply.error || "Offscreen document failed");
+
+        failure.fatal = true;
+        throw failure;
+      }
+
+      return reply.data;
     } catch (error) {
-      if (attempt === attempts - 1) throw error;
+      if (error?.fatal || attempt >= attempts - 1) throw error;
 
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
   }
 };
 
-const stopCapture = async () => {
-  const session = await getSession();
-
-  if (!session) return null;
-
+/** Asks the meeting tab's content script for title/participants; null if absent. */
+const askContentScript = async (tabId) => {
   try {
-    await sendToOffscreen({ type: "STOP" });
+    return await chrome.tabs.sendMessage(tabId, { type: "GET_MEETING_INFO" });
   } catch {
-    // The offscreen document may already be gone; the session still
-    // needs finalizing either way.
+    return null;
+  }
+};
+
+const startCapture = async ({ tabId, mode, hints }) => {
+  if (await getSession()) {
+    throw new Error("Already recording. Stop the current recording first.");
   }
 
-  await closeOffscreen();
+  const settings = await getSettings();
+
+  if (!(await hasBackendPermission(settings.apiBase))) {
+    throw new Error("Allow access to the backend URL first (Settings, then Save).");
+  }
+
+  const tab = await chrome.tabs.get(tabId);
+
+  if (isZoomLaunchPage(tab.url)) throw new Error(ZOOM_LAUNCH_MESSAGE);
+
+  const detected = detectPlatform(tab.url);
+  const info = await askContentScript(tabId);
+
+  // getMediaStreamId must be called from the worker (the popup click
+  // granted activeTab for this tab); the offscreen document redeems it.
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+
+  const client = clientFor(settings);
+  const created = await client.startSession({
+    title: (info?.title || tab.title || "Browser meeting").trim().slice(0, 200),
+    platform: detected?.platform ?? "OTHER",
+    source: "EXTENSION",
+    mode,
+    hints,
+  });
+
+  const session = {
+    sessionId: created.sessionId,
+    meetingId: created.meetingId,
+    tabId,
+    title: tab.title ?? "",
+    platform: detected?.label ?? "Browser tab",
+    platformCode: detected?.platform ?? null,
+    startedAt: Date.now(),
+    chunkCount: 0,
+    elapsedMs: 0,
+    hasMic: false,
+    micEnabled: false,
+    queue: { pending: 0, failed: 0, halted: null, lastRetry: null },
+    lastError: null,
+  };
+
+  await setSession(session);
 
   try {
-    await post(`/live/sessions/${session.sessionId}/end`, {});
+    await ensureOffscreen();
+
+    const started = await sendToOffscreen({
+      type: "OFFSCREEN_START",
+      streamId,
+      sessionId: session.sessionId,
+      apiBase: settings.apiBase,
+      token: settings.deviceToken,
+    });
+
+    session.hasMic = started.hasMic;
+    session.micEnabled = started.hasMic;
+    await setSession(session);
   } catch (error) {
-    console.error("Could not finalize session", error);
+    // Nothing was recorded: end the empty session and clean up.
+    await closeOffscreen().catch(() => undefined);
+    await clearSession();
+    await client.endSession(session.sessionId).catch(() => undefined);
+    throw error;
   }
 
-  await clearSession();
+  setBadge("REC");
 
-  setBadge("");
+  if (info?.participants?.length) {
+    void client.sendRoster(session.sessionId, info.participants).catch(() => undefined);
+  }
 
   return session;
 };
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  // Messages from the offscreen document are namespaced so they do not
-  // collide with the popup's commands.
-  if (message?.type === "OFFSCREEN_PROGRESS") {
-    void getSession().then((session) => {
-      if (!session) return;
+let stopping = null;
 
-      void setSession({
-        ...session,
-        chunkCount: message.chunkCount ?? session.chunkCount,
-        elapsedMs: message.elapsedMs ?? session.elapsedMs,
-      });
+/**
+ * Stops recording, waits up to STOP_FLUSH_MS for the queue, then ends
+ * the session. If chunks are still waiting (offline), /end is deferred
+ * to the drain alarm so no audio is cut off.
+ */
+const stopCapture = () => {
+  stopping ??= (async () => {
+    const session = await getSession();
+
+    if (!session) return null;
+
+    setBadge("...", "#6b7280");
+
+    let remaining = null;
+
+    try {
+      const reply = await sendToOffscreen(
+        { type: "OFFSCREEN_STOP", flushTimeoutMs: STOP_FLUSH_MS },
+        2
+      );
+
+      remaining = reply.remaining;
+    } catch {
+      // The offscreen document is gone (crash, browser restart); its
+      // chunks, if any, are still in IndexedDB.
+    }
+
+    await closeOffscreen().catch(() => undefined);
+    await clearSession();
+    setBadge("");
+
+    const settings = await getSettings();
+    let ended = false;
+
+    if (remaining === 0) {
+      try {
+        await clientFor(settings).endSession(session.sessionId);
+        ended = true;
+      } catch (error) {
+        console.error("Could not end the session; will retry", error);
+      }
+    }
+
+    if (!ended) {
+      const pending = new Set(await getPendingEnds());
+
+      pending.add(session.sessionId);
+      await setPendingEnds([...pending]);
+      await chrome.alarms.create(DRAIN_ALARM, { periodInMinutes: 1 });
+      void drainBacklog();
+    }
+
+    return {
+      meetingId: session.meetingId,
+      ended,
+      remaining: remaining ?? 0,
+      webBase: settings.webBase,
+    };
+  })().finally(() => {
+    stopping = null;
+  });
+
+  return stopping;
+};
+
+let draining = null;
+
+/**
+ * Uploads chunks left behind by a stopped recording, then ends their
+ * sessions. Skipped while recording: the offscreen queue drains every
+ * session in the shared store itself.
+ */
+const drainBacklog = () => {
+  draining ??= (async () => {
+    if (await chrome.offscreen.hasDocument()) return;
+
+    const settings = await getSettings();
+
+    if (!(await hasBackendPermission(settings.apiBase))) return;
+
+    const client = clientFor(settings);
+    const store = new IdbChunkStore();
+    const done = new Set();
+    const queue = new UploadQueue({
+      store,
+      upload: (chunk) => client.uploadChunk(chunk),
+      // 410: the server already ended it (idle reaper); nothing to end.
+      onSessionEnded: (sessionId) => done.add(sessionId),
     });
 
-    return false;
-  }
+    for (const sessionId of await getPendingEnds()) {
+      const left = await queue.flush(sessionId, 25_000);
 
-  if (message?.type === "OFFSCREEN_ERROR") {
-    console.error("Capture error", message.error);
-    return false;
+      if ((await queue.state()).halted) break;
+      if (left > 0 || done.has(sessionId)) continue;
+
+      try {
+        await client.endSession(sessionId);
+        done.add(sessionId);
+      } catch (error) {
+        // 404/410 mean there is nothing left to end; anything else
+        // retries on the next alarm.
+        if (error?.status === 404 || error?.status === 410) done.add(sessionId);
+      }
+    }
+
+    // Chunks of sessions not in pendingEnds (e.g. after a crash) are
+    // uploaded too; they are idempotent on the server.
+    const orphans = new Set(
+      (await store.list())
+        .filter((chunk) => !chunk.failed && !done.has(chunk.sessionId))
+        .map((chunk) => chunk.sessionId)
+    );
+
+    for (const sessionId of orphans) {
+      if ((await queue.state()).halted) break;
+      await queue.flush(sessionId, 25_000);
+    }
+
+    queue.dispose();
+
+    const pendingEnds = (await getPendingEnds()).filter((id) => !done.has(id));
+
+    await setPendingEnds(pendingEnds);
+
+    const leftover = (await store.list()).filter((chunk) => !chunk.failed);
+
+    if (pendingEnds.length === 0 && leftover.length === 0) {
+      await chrome.alarms.clear(DRAIN_ALARM);
+    }
+
+    return { pendingEnds: pendingEnds.length, chunks: leftover.length };
+  })().finally(() => {
+    draining = null;
+  });
+
+  return draining;
+};
+
+const setMic = async (enabled) => {
+  const session = await getSession();
+
+  if (!session) throw new Error("Not recording.");
+
+  const { micEnabled } = await sendToOffscreen({ type: "OFFSCREEN_MIC", enabled });
+
+  await setSession({ ...session, micEnabled });
+
+  return micEnabled;
+};
+
+const sendRoster = async (tabId, participants) => {
+  const session = await getSession();
+
+  if (!session || session.tabId !== tabId || !participants?.length) return;
+
+  const settings = await getSettings();
+
+  await clientFor(settings)
+    .sendRoster(session.sessionId, participants)
+    .catch(() => undefined);
+};
+
+const status = async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const detected = detectPlatform(tab?.url);
+
+  return {
+    session: await getSession(),
+    pendingEnds: await getPendingEnds(),
+    tab: tab
+      ? {
+          id: tab.id,
+          title: tab.title,
+          url: tab.url,
+          platform: detected?.label ?? null,
+          supported: Boolean(detected),
+          inMeeting: isInMeeting(tab.url),
+          zoomLaunchPage: isZoomLaunchPage(tab.url),
+        }
+      : null,
+  };
+};
+
+/** Progress from the offscreen document, folded into the stored session for the popup. */
+const recordProgress = async (patch) => {
+  const session = await getSession();
+
+  if (session) await setSession({ ...session, ...patch });
+};
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Meant for the offscreen document, which answers it itself.
+  if (message?.target === "offscreen") return false;
+
+  switch (message?.type) {
+    case "OFFSCREEN_PROGRESS":
+      void recordProgress({ chunkCount: message.chunkCount, elapsedMs: message.elapsedMs });
+      return false;
+    case "OFFSCREEN_QUEUE":
+      void recordProgress({ queue: message.queue });
+      return false;
+    case "OFFSCREEN_ERROR":
+      console.error("Capture error:", message.error);
+      void recordProgress({ lastError: message.error });
+      return false;
+    case "OFFSCREEN_TAB_ENDED":
+      void stopCapture();
+      return false;
+    case "ROSTER":
+      if (sender.tab?.id !== undefined) void sendRoster(sender.tab.id, message.participants);
+      return false;
+    case "CALL_ENDED":
+      void getSession().then((session) => {
+        if (session && session.tabId === sender.tab?.id) void stopCapture();
+      });
+      return false;
+    default:
+      break;
   }
 
   const handlers = {
-    START: () => startCapture(message.tabId),
+    START: () => startCapture(message),
     STOP: () => stopCapture(),
-    STATUS: async () => {
-      const session = await getSession();
-      const [tab] = await chrome.tabs.query({
-        active: true,
-        currentWindow: true,
-      });
-
-      const detected = detectPlatform(tab?.url);
-
-      return {
-        session,
-        tab: tab
-          ? {
-              id: tab.id,
-              title: tab.title,
-              url: tab.url,
-              platform: detected?.label ?? null,
-              supported: Boolean(detected),
-              inMeeting: isInMeeting(tab.url),
-            }
-          : null,
-      };
-    },
+    STATUS: () => status(),
+    MIC: () => setMic(Boolean(message.enabled)),
+    DRAIN: () => drainBacklog(),
   };
 
   const handler = handlers[message?.type];
@@ -204,44 +410,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   handler()
     .then((data) => sendResponse({ ok: true, data }))
-    .catch((error) =>
-      sendResponse({ ok: false, error: error.message ?? String(error) })
-    );
+    .catch((error) => sendResponse({ ok: false, error: error?.message ?? String(error) }));
 
-  // Keeps the message channel open for the async response.
+  // Keeps the channel open for the async response.
   return true;
 });
 
-/**
- * Closing the meeting tab ends the meeting, so the capture should end
- * with it rather than recording silence.
- */
+/** Closing the meeting tab ends the meeting, so the capture ends with it. */
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const session = await getSession();
 
-  if (session?.tabId === tabId) {
-    await stopCapture();
-  }
+  if (session?.tabId === tabId) await stopCapture();
 });
 
 /**
- * Navigating away from the call — hanging up returns to a landing page
- * — also ends the meeting.
+ * Navigating away from the call also ends it. Only for meeting
+ * platforms: an arbitrary tab ("record this tab") may navigate freely.
  */
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   if (!changeInfo.url) return;
 
   const session = await getSession();
 
-  if (session?.tabId === tabId && !isInMeeting(changeInfo.url)) {
+  if (session?.tabId === tabId && session.platformCode && !isInMeeting(changeInfo.url)) {
     await stopCapture();
   }
 });
 
-// A worker restart loses the offscreen document but not the stored
-// session, which would leave a stale REC badge and an orphaned row.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === DRAIN_ALARM) void drainBacklog();
+});
+
+/**
+ * A browser restart loses the offscreen document but not the stored
+ * session: finish it (its chunks are in IndexedDB) instead of leaving a
+ * stale REC badge and an orphaned session.
+ */
 chrome.runtime.onStartup.addListener(async () => {
-  if (await getSession()) {
-    await stopCapture();
-  }
+  if (await getSession()) await stopCapture();
+  else void drainBacklog();
 });

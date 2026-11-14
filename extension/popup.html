@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Meeting AI Assistant</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <h1>Meeting AI Assistant</h1>
+
+    <p id="tab-status" class="muted"></p>
+    <p id="zoom-launch" class="notice warn hidden">
+      Click 'Join from your browser' to record here, or use the desktop recorder.
+    </p>
+    <p id="error" class="notice error hidden" role="alert"></p>
+
+    <p id="mic-missing" class="notice hidden">
+      The microphone is not allowed yet, so only the meeting would be recorded.
+      <button id="grant-mic" type="button" class="secondary">Allow microphone</button>
+    </p>
+
+    <!-- Idle: choose mode and hints, then start. -->
+    <section id="idle-view" class="stack">
+      <div>
+        <label for="mode">Meeting type</label>
+        <select id="mode"></select>
+      </div>
+      <div>
+        <label for="hints">Names and terms</label>
+        <textarea id="hints" rows="2" placeholder="Priya, Kubernetes, Q3 roadmap"></textarea>
+        <span class="muted tiny">Comma-separated; helps spell names and jargon.</span>
+      </div>
+      <p class="notice tiny">
+        <strong>Consent:</strong> tell everyone in the call that you are recording
+        and transcribing it. In many places it is required by law.
+      </p>
+      <button id="start" type="button" class="block">Start recording</button>
+    </section>
+
+    <!-- Recording. -->
+    <section id="rec-view" class="stack hidden">
+      <div class="row">
+        <div><span class="rec-dot"></span><strong>Recording</strong> <span id="rec-platform" class="muted"></span></div>
+        <span id="timer" class="timer">0:00</span>
+      </div>
+
+      <div>
+        <div class="row tiny"><span>You (mic)</span><span id="mic-state" class="muted"></span></div>
+        <div id="mic-meter" class="meter"><div></div></div>
+      </div>
+      <div>
+        <div class="row tiny"><span>Meeting (tab)</span><span id="tab-state" class="muted"></span></div>
+        <div id="tab-meter" class="meter"><div></div></div>
+      </div>
+
+      <p id="upload-status" class="tiny"></p>
+
+      <div class="row">
+        <button id="mic-toggle" type="button" class="secondary">Mute mic</button>
+        <a id="meeting-link" href="#" target="_blank" rel="noopener">Open meeting</a>
+      </div>
+
+      <button id="stop" type="button" class="danger block">Stop and summarize</button>
+    </section>
+
+    <!-- Stopping / backlog. -->
+    <section id="after-view" class="stack hidden">
+      <p id="after-text"></p>
+    </section>
+
+    <p id="backlog" class="tiny muted"></p>
+
+    <details id="settings">
+      <summary>Settings</summary>
+      <div class="stack">
+        <div>
+          <label for="api-base">Backend URL</label>
+          <input id="api-base" type="url" placeholder="http://localhost:5000/api" />
+        </div>
+        <div>
+          <label for="device-token">Device token</label>
+          <input id="device-token" type="password" autocomplete="off" placeholder="Only if the backend sets DEVICE_TOKEN" />
+        </div>
+        <div>
+          <label for="web-base">Web app URL</label>
+          <input id="web-base" type="url" placeholder="http://localhost:5173" />
+        </div>
+        <button id="save-settings" type="button" class="secondary block">Save</button>
+        <p id="settings-status" class="tiny"></p>
+      </div>
+    </details>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
