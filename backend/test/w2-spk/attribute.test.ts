@@ -199,11 +199,17 @@ describe("linkSegmentSpeakers and applyAutoNames", () => {
   it("is a no-op for segments without a speakerId", async () => {
     const { deps } = makeDeps({ diarize: oneCluster([1, 0]) });
     let called = false;
-    deps.profiles.assignSegments = (async () => {
-      called = true;
-      return 0;
-    }) as never;
-    await linkSegmentSpeakers("m", [{ idx: 0, text: "hi" }], {}, deps);
+    const spy = {
+      ...deps,
+      profiles: {
+        ...deps.profiles,
+        assignSegments: (async () => {
+          called = true;
+          return 0;
+        }) as never,
+      },
+    };
+    await linkSegmentSpeakers("m", [{ idx: 0, text: "hi" }], {}, spy);
     expect(called).toBe(false);
   });
 
