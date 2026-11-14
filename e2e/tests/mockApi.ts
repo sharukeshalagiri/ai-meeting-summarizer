@@ -138,7 +138,9 @@ export const mockApi = async (page: Page, options: MockOptions) => {
       case `POST ${base}/summarize`:
         if (options.failStep === "summarize") return fail(route, 502, options.failMessage ?? "The AI service is temporarily overloaded.");
         summarized = true;
-        return ok(route, null, 202);
+        // Same body as meeting.service startSummary: the summary runs in the
+        // background (here it is already done when the page polls).
+        return ok(route, { meetingId: MEETING_ID, status: "PROCESSING", processingStage: "SUMMARIZING" }, 202);
       case `GET ${base}`:
         return ok(route, meeting());
       case `GET ${base}/segments`:
