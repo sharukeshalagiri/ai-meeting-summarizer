@@ -1,10 +1,27 @@
 import { Type } from "@google/genai";
 
-/** A timestamped slice of audio, before speakers are attributed. */
+/** One word as stored in TranscriptSegment.words (docs/SCHEMA_NOTES.md). */
+export interface StoredWord {
+  w: string;
+  startMs: number;
+  endMs: number;
+  p?: number;
+}
+
+/**
+ * A timestamped slice of audio, before speakers are attributed.
+ *
+ * `channel` and `words` are optional and only set when the ASR provider
+ * supplied them; they ride along through diarization (which spreads the
+ * segment) so the repositories can store them.
+ */
 export interface RawSegment {
   text: string;
   startMs: number;
   endMs: number;
+  /** "mic" (left, the user) | "remote" (right, everyone else). */
+  channel?: "mic" | "remote";
+  words?: StoredWord[];
 }
 
 /** A segment once a speaker label has been assigned. */
@@ -73,7 +90,7 @@ export const formatTimestamp = (ms: number): string => {
  * action items to the person who actually spoke them.
  */
 export const toSpeakerTranscript = (
-  segments: DiarizedSegment[]
+  segments: Pick<DiarizedSegment, "speaker" | "text" | "startMs">[]
 ): string =>
   segments
     .map(

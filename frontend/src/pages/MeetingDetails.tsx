@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { API_BASE_URL, getErrorMessage, postData } from "../api/api";
+import { API_BASE_URL, getData, getErrorMessage, postData } from "../api/api";
 import ErrorState from "../components/ErrorState";
 import { Skeleton } from "../components/Skeleton";
 import StatusBadge from "../components/StatusBadge";
@@ -24,6 +24,16 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
+/** How often the page re-reads a meeting whose summary is running. */
+const POLL_EVERY_MS = 5_000;
+
+/**
+ * When to stop polling and offer a retry. The summary runs in-process
+ * on the backend, so a server restart loses it and the stage would stay
+ * SUMMARIZING forever (Pair 4 moves it to a job queue).
+ */
+const POLL_LIMIT_MS = 20 * 60 * 1000;
+
 function MeetingDetails() {
   const { id } = useParams();
   const [params] = useSearchParams();
@@ -36,7 +46,42 @@ function MeetingDetails() {
     loading,
     error,
     refetch,
+    setData: setMeeting,
   } = useFetch<Meeting>(`/meetings/${id}`);
+
+  // The summary runs in the background after POST /summarize (or live
+  // /end); poll quietly (no skeleton) until the stage changes.
+  const summarizing = meeting?.processingStage === "SUMMARIZING";
+  const [pollExpired, setPollExpired] = useState(false);
+
+  useEffect(() => {
+    if (!summarizing || !id) return;
+
+    const startedAt = Date.now();
+    let cancelled = false;
+
+    const timer = window.setInterval(() => {
+      if (Date.now() - startedAt > POLL_LIMIT_MS) {
+        window.clearInterval(timer);
+        setPollExpired(true);
+        return;
+      }
+
+      getData<Meeting>(`/meetings/${id}`)
+        .then((next) => {
+          if (!cancelled) setMeeting(next);
+        })
+        .catch((err) => {
+          // A missed poll is retried on the next tick.
+          console.error(err);
+        });
+    }, POLL_EVERY_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [summarizing, id, setMeeting]);
 
   const { data: segments } = useFetch<Segment[]>(
     `/meetings/${id}/segments`
@@ -58,6 +103,7 @@ function MeetingDetails() {
   /** Lets the user recover a meeting whose pipeline failed midway. */
   const retryProcessing = async () => {
     setRetryError(null);
+    setPollExpired(false);
 
     try {
       if (!meeting?.transcript) {
@@ -108,9 +154,13 @@ function MeetingDetails() {
     );
   }
 
+  // A summary still marked as running after the poll limit is treated
+  // as lost, so the retry button comes back.
+  const summaryStuck = summarizing && pollExpired;
   const isProcessing =
-    meeting.status === "PROCESSING" || meeting.status === "LIVE";
-  const hasFailed = meeting.status === "FAILED";
+    (meeting.status === "PROCESSING" || meeting.status === "LIVE") &&
+    !summaryStuck;
+  const hasFailed = meeting.status === "FAILED" || summaryStuck;
   const incomplete = hasFailed || !meeting.summary;
 
   const duration = formatDuration(meeting.durationSec);
@@ -173,7 +223,20 @@ function MeetingDetails() {
         </p>
       )}
 
-      {isProcessing && !retrying && (
+      {meeting.processingError && !summarizing && (
+        <p className="muted tiny" role="status">
+          {meeting.processingError}
+        </p>
+      )}
+
+      {summarizing && !summaryStuck && !retrying && (
+        <p className="step step-active" role="status">
+          <span className="spinner" /> Summarizing... This can take a few
+          minutes; the page updates by itself.
+        </p>
+      )}
+
+      {isProcessing && !summarizing && !retrying && (
         <div className="card">
           <p>
             {meeting.status === "LIVE"

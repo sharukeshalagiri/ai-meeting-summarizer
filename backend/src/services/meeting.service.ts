@@ -15,6 +15,7 @@ import { diarizeSegments } from "./diarization.service";
 import { indexMeeting } from "./embedding.service";
 import { transcribeAudioDetailed } from "./speech.service";
 import { generateSummary } from "./summary.service";
+import { resummarize } from "./w1-sum.service";
 
 const log = logger.child({ module: "meeting.service" });
 
@@ -211,44 +212,95 @@ const summarizationInput = async (
   return segments.length ? toSpeakerTranscript(segments) : fallback;
 };
 
-/** Runs Gemini over a stored transcript and saves the summary. */
-export const summarizeMeeting = async (meetingId: string) => {
-  await assertExists(meetingId);
+/**
+ * Meeting.processingStage values for the summary step. The meeting page
+ * polls while the stage is SUMMARIZING.
+ */
+export const ProcessingStage = {
+  SUMMARIZING: "SUMMARIZING",
+  DONE: "DONE",
+  FAILED: "FAILED",
+} as const;
 
-  const transcript = await transcriptRepo.findByMeetingId(meetingId);
+/** User-safe processingError messages (never upstream error text). */
+export const PROCESSING_ERRORS = {
+  V2_FALLBACK:
+    "The detailed summary could not be generated, so a basic summary was used instead.",
+  FAILED: "The summary could not be generated. Retry from the meeting page.",
+} as const;
 
-  if (!transcript) {
-    throw NotFound("Transcript not found");
-  }
+/**
+ * Summaries running in this process, by meeting id.
+ *
+ * The summary runs in the background, in-process, because the v2
+ * pipeline can take 5-9 minutes when Gemini retries 503s, longer than
+ * Node's default 5-minute request timeout. This is deliberately minimal:
+ * a restart loses the run (the meeting page stops polling after a cap
+ * and offers a retry). Pair 4 (w3-jobs) replaces it with pg-boss.
+ */
+const running = new Map<string, Promise<void>>();
+
+/** The in-flight summary for a meeting, if any (tests and smoke runs). */
+export const summaryJob = (meetingId: string): Promise<void> | undefined =>
+  running.get(meetingId);
+
+/** The legacy single-prompt summary, kept as the v2 pipeline's fallback. */
+const legacySummary = async (meetingId: string, transcript: string) => {
+  const { structured, markdown } = await generateSummary(
+    await summarizationInput(meetingId, transcript)
+  );
+
+  await summaryRepo.upsert(
+    meetingId,
+    markdown,
+    { ...toJsonValue(structured), pipeline: "legacy" },
+    structured.sentiment.overall
+  );
+
+  // Action items are promoted to rows so they can be tracked and
+  // counted across meetings, not just read inside one summary.
+  await actionItemRepo.replaceForMeeting(meetingId, structured.actionItems);
+};
+
+/**
+ * Produces the final summary: the w1-sum v2 pipeline first (which keeps
+ * human-reviewed action items and stores CLEAN noise labels), then the
+ * legacy summarizer if v2 throws. Summary.data.pipeline records which
+ * one produced it. Never throws: the outcome lands on the meeting row.
+ */
+const runSummary = async (meetingId: string, transcript: string) => {
+  const startedAt = Date.now();
 
   try {
-    const startedAt = Date.now();
+    let pipeline: "v2" | "legacy" = "v2";
 
-    const { structured, markdown } = await generateSummary(
-      await summarizationInput(meetingId, transcript.content)
-    );
+    try {
+      await resummarize(meetingId);
+    } catch (error) {
+      log.error("Summary pipeline v2 failed; using the legacy summary", error, {
+        meetingId,
+      });
 
-    const summary = await summaryRepo.upsert(
-      meetingId,
-      markdown,
-      toJsonValue(structured),
-      structured.sentiment.overall
-    );
+      pipeline = "legacy";
 
-    // Action items are promoted to rows so they can be tracked and
-    // counted across meetings, not just read inside one summary.
-    await actionItemRepo.replaceForMeeting(
-      meetingId,
-      structured.actionItems
-    );
+      await meetingRepo.updateProcessing(meetingId, {
+        error: PROCESSING_ERRORS.V2_FALLBACK,
+        progress: 50,
+      });
 
-    await setStatus(meetingId, MeetingStatus.COMPLETED);
+      await legacySummary(meetingId, transcript);
+    }
+
+    await meetingRepo.updateProcessing(meetingId, {
+      stage: ProcessingStage.DONE,
+      progress: 100,
+      status: MeetingStatus.COMPLETED,
+    });
 
     log.info("Summary complete", {
       meetingId,
+      pipeline,
       durationMs: Date.now() - startedAt,
-      actionItems: structured.actionItems.length,
-      sentiment: structured.sentiment.overall,
     });
 
     // Indexing powers search and chat, but a meeting is complete
@@ -259,21 +311,79 @@ export const summarizeMeeting = async (meetingId: string) => {
         reason: error instanceof Error ? error.message : String(error),
       });
     });
-
-    return summary;
   } catch (error) {
     log.error("Summary generation failed", error, { meetingId });
 
-    await markFailed(meetingId);
-
-    throw error;
+    await meetingRepo
+      .updateProcessing(meetingId, {
+        stage: ProcessingStage.FAILED,
+        error: PROCESSING_ERRORS.FAILED,
+        status: MeetingStatus.FAILED,
+      })
+      .catch((markError) =>
+        log.error("Could not record the summary failure", markError, {
+          meetingId,
+        })
+      );
   }
 };
 
 /**
- * Full pipeline used by the single-request upload flow. The staged
- * frontend calls transcribe and summarize separately so it can report
- * progress.
+ * Starts summarizing a transcribed meeting in the background and
+ * returns at once (POST /summarize answers 202; the client polls
+ * GET /meetings/:id). A second call while one is running does not start
+ * another.
+ */
+export const startSummary = async (meetingId: string) => {
+  await assertExists(meetingId);
+
+  const transcript = await transcriptRepo.findByMeetingId(meetingId);
+
+  if (!transcript) {
+    throw NotFound("Transcript not found");
+  }
+
+  if (!running.has(meetingId)) {
+    // Claimed synchronously, before any await, so two concurrent
+    // requests cannot both start a run.
+    let release: () => void = () => {};
+    running.set(
+      meetingId,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+
+    try {
+      await meetingRepo.updateProcessing(meetingId, {
+        stage: ProcessingStage.SUMMARIZING,
+        progress: 0,
+        error: null,
+        status: MeetingStatus.PROCESSING,
+      });
+    } catch (error) {
+      running.delete(meetingId);
+      release();
+      throw error;
+    }
+
+    void runSummary(meetingId, transcript.content).finally(() => {
+      running.delete(meetingId);
+      release();
+    });
+  }
+
+  return {
+    meetingId,
+    status: MeetingStatus.PROCESSING,
+    processingStage: ProcessingStage.SUMMARIZING,
+  };
+};
+
+/**
+ * Single-request upload flow: attach, transcribe, then start the
+ * background summary. The staged frontend calls transcribe and
+ * summarize separately so it can report progress.
  */
 export const processMeeting = async (
   meetingId: string,
@@ -282,11 +392,14 @@ export const processMeeting = async (
   const meeting = await attachAudio(meetingId, audioPath);
 
   const transcript = await transcribeMeeting(meetingId);
-  const summary = await summarizeMeeting(meetingId);
+  const processing = await startSummary(meetingId);
 
+  // The summary is no longer part of this response: it runs in the
+  // background like POST /summarize, and GET /meetings/:id reports it.
   return {
-    meeting: { ...meeting, status: MeetingStatus.COMPLETED },
+    meeting: { ...meeting, status: processing.status },
     transcript,
-    summary,
+    summary: null,
+    processing,
   };
 };

@@ -159,9 +159,9 @@ export const getSummaryReview = async (meetingId: string) => {
 };
 
 /**
- * Records the user's mode choice. Stored as a MEETING_MODE correction
- * because this track does not own meeting.repository; see
- * docs/decisions/w1-sum.md ("Requests for other tracks").
+ * Records the user's mode choice: a MEETING_MODE correction (evaluation
+ * feedback and the source of truth for effectiveModeSetting) plus
+ * Meeting.mode, so anything reading the meeting row sees it too.
  */
 export const setMode = async (meetingId: string, rawMode: unknown) => {
   const mode = normalizeModeSetting(rawMode);
@@ -186,6 +186,10 @@ export const setMode = async (meetingId: string, rawMode: unknown) => {
     });
   }
 
+  if (meeting.mode !== mode) {
+    await meetingRepo.updateMode(meetingId, mode);
+  }
+
   return { modeSetting: mode };
 };
 
@@ -194,7 +198,7 @@ export interface ResummarizeOptions {
   mode?: unknown;
   /** IANA zone for resolving deadlines; UTC if missing. */
   timezone?: string | null;
-  /** Persists CLEAN labels; wired once segment.repository has a writer. */
+  /** Persists CLEAN labels; defaults to segment.repository setNoiseLabels. */
   writeNoiseLabels?: (labels: NoiseLabelUpdate[]) => Promise<void>;
 }
 
@@ -234,14 +238,22 @@ export const resummarize = async (
       modeSetting,
       meetingStart: meeting.startedAt ?? meeting.createdAt,
       timezone: options.timezone ?? null,
-      writeNoiseLabels: options.writeNoiseLabels,
+      // CLEAN labels are stored by default so the next run skips
+      // segments already classified.
+      writeNoiseLabels:
+        options.writeNoiseLabels ??
+        (async (labels) => {
+          await segmentRepo.setNoiseLabels(meetingId, labels);
+        }),
     }
   );
 
+  // `pipeline` records which summarizer produced Summary.data (the
+  // background runner falls back to "legacy"); no schema change needed.
   const saved = await summaryRepo.upsert(
     meetingId,
     markdown,
-    toJsonValueV2(summary),
+    { ...toJsonValueV2(summary), pipeline: "v2" },
     summary.sentiment.overall
   );
 

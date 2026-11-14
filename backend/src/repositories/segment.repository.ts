@@ -1,7 +1,24 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import type { DiarizedSegment } from "../types/segment";
 
 /** All TranscriptSegment database access. */
+
+/**
+ * Columns shared by every segment writer. `channel` and `words` are
+ * only present when the ASR provider returned them (docs/SCHEMA_NOTES.md),
+ * so older providers keep writing null / DB-null.
+ */
+export const segmentColumns = (segment: DiarizedSegment) => ({
+  speaker: segment.speaker,
+  text: segment.text,
+  startMs: segment.startMs,
+  endMs: segment.endMs,
+  channel: segment.channel ?? null,
+  words: segment.words?.length
+    ? (segment.words as unknown as Prisma.InputJsonValue)
+    : Prisma.DbNull,
+});
 
 export const findByMeetingId = (meetingId: string) =>
   prisma.transcriptSegment.findMany({
@@ -30,10 +47,7 @@ export const replaceForMeeting = (
       data: segments.map((segment, idx) => ({
         meetingId,
         idx,
-        speaker: segment.speaker,
-        text: segment.text,
-        startMs: segment.startMs,
-        endMs: segment.endMs,
+        ...segmentColumns(segment),
       })),
     }),
   ]);
@@ -56,10 +70,7 @@ export const appendForMeeting = async (
     data: segments.map((segment, offset) => ({
       meetingId,
       idx: existing + offset,
-      speaker: segment.speaker,
-      text: segment.text,
-      startMs: segment.startMs,
-      endMs: segment.endMs,
+      ...segmentColumns(segment),
     })),
   });
 
@@ -81,10 +92,7 @@ export const insertAtIdx = async (
     data: segments.map((segment) => ({
       meetingId,
       idx: segment.idx,
-      speaker: segment.speaker,
-      text: segment.text,
-      startMs: segment.startMs,
-      endMs: segment.endMs,
+      ...segmentColumns(segment),
     })),
     skipDuplicates: true,
   });
@@ -112,3 +120,44 @@ export const findWithoutEmbedding = (meetingId: string) =>
     where: { meetingId, embedding: { is: null } },
     orderBy: { idx: "asc" },
   });
+
+/**
+ * Segments with from <= idx < to. Live capture uses it to read the
+ * previous chunk (idx seq*1000 .. seq*1000+999), which stays correct when
+ * chunks arrive out of order, unlike "the most recent N segments".
+ */
+export const findByIdxRange = (
+  meetingId: string,
+  from: number,
+  to: number
+) =>
+  prisma.transcriptSegment.findMany({
+    where: { meetingId, idx: { gte: from, lt: to } },
+    orderBy: { idx: "asc" },
+  });
+
+/**
+ * Stores the summary pipeline's CLEAN labels (TranscriptSegment.noiseLabel),
+ * keyed by idx, in one transaction so a summary run never leaves half
+ * its labels written. (meetingId, idx) is the segment's unique key; the
+ * schema has no transcriptId on segments. updateMany, not update, so an
+ * idx that no longer exists (re-transcribed meanwhile) is skipped
+ * rather than failing the batch.
+ */
+export const setNoiseLabels = async (
+  meetingId: string,
+  labels: { idx: number; label: string }[]
+): Promise<number> => {
+  if (labels.length === 0) return 0;
+
+  const results = await prisma.$transaction(
+    labels.map(({ idx, label }) =>
+      prisma.transcriptSegment.updateMany({
+        where: { meetingId, idx },
+        data: { noiseLabel: label },
+      })
+    )
+  );
+
+  return results.reduce((total, result) => total + result.count, 0);
+};
