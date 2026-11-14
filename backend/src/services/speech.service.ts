@@ -1,150 +1,155 @@
-import axios from "axios";
-import path from "path";
-import { env } from "../lib/env";
 import { logger } from "../lib/logger";
-import { UpstreamError } from "../types/errors";
+import {
+  getTranscriptionProvider,
+  type AsrRequest,
+  type BoundaryWord,
+} from "../providers/transcription";
+import { parseLocalSegments } from "../providers/transcription/parse";
+import type { ChannelLayout, MeetingMode } from "../types/capture";
+import type { TranscribedSegment } from "../types/providers";
 import type { RawSegment } from "../types/segment";
 
 const log = logger.child({ module: "speech.service" });
 
-export interface TranscriptionResult {
-  text: string;
-  segments: RawSegment[];
-  /** Length of the transcribed audio, before any offset is applied. */
-  durationMs: number;
-  language: string | null;
+/** One word as stored in TranscriptSegment.words (docs/SCHEMA_NOTES.md). */
+export interface StoredWord {
+  w: string;
+  startMs: number;
+  endMs: number;
+  p?: number;
 }
 
 /**
- * Whisper occasionally emits filler ("Thank you.", "Bye.") over
- * silence. Segments it is fairly sure contain no speech are dropped so
- * they do not pollute summaries or search results.
+ * A segment ready to store. `channel` and `words` are only present when
+ * the provider supplied them, so callers that only know RawSegment keep
+ * working unchanged.
  */
-const NO_SPEECH_THRESHOLD = 0.75;
+export interface AsrSegment extends RawSegment {
+  /** "mic" (left, the user) | "remote" (right, everyone else). */
+  channel?: "mic" | "remote";
+  words?: StoredWord[];
+}
+
+export interface TranscriptionResult {
+  text: string;
+  segments: AsrSegment[];
+  /** Length of the transcribed audio, before any offset is applied. */
+  durationMs: number;
+  language: string | null;
+  /** Provider that produced it, e.g. "local" or "deepgram:nova-2". */
+  provider?: string;
+}
+
+export interface TranscribeOptions {
+  /** Capture contract layout; stereo-mic-left is split per channel. */
+  channelLayout?: ChannelLayout;
+  /** LiveSession.hints: names, jargon, agenda. */
+  hints?: string[];
+  /** LiveSession.roster: participant names, placed before hints. */
+  roster?: string[];
+  language?: string | null;
+  mode?: MeetingMode;
+  /**
+   * Tail words of the previous chunk (its segments' `words`, each with
+   * the segment's channel), to drop words repeated across the cut.
+   */
+  previousWords?: (StoredWord & { channel?: string | null })[];
+}
+
+/** Provider segment -> storable segment (word shape of SCHEMA_NOTES). */
+export const toStoredSegment = (segment: TranscribedSegment): AsrSegment => ({
+  text: segment.text,
+  startMs: segment.startMs,
+  endMs: segment.endMs,
+  ...(segment.channel ? { channel: segment.channel } : {}),
+  ...(segment.words?.length
+    ? {
+        words: segment.words.map((word) => ({
+          w: word.word,
+          startMs: word.startMs,
+          endMs: word.endMs,
+          ...(word.probability !== undefined ? { p: word.probability } : {}),
+        })),
+      }
+    : {}),
+});
 
 /**
- * Validates the segment list returned by the Whisper service. Exported
- * so the filtering rules can be tested without a running service.
+ * Validates the segment list returned by the ai-service (dropping
+ * likely hallucinations) and keeps text, timing, channel and words.
+ * Exported so the filtering rules can be tested without a running
+ * service.
  */
-export const parseSegments = (value: unknown): RawSegment[] => {
-  if (!Array.isArray(value)) return [];
+export const parseSegments = (value: unknown): AsrSegment[] =>
+  parseLocalSegments(value).map(toStoredSegment);
 
-  return value.flatMap((raw) => {
-    if (typeof raw !== "object" || raw === null) return [];
-
-    const item = raw as Record<string, unknown>;
-
-    const text = typeof item.text === "string" ? item.text.trim() : "";
-    const startMs = Number(item.startMs);
-    const endMs = Number(item.endMs);
-
-    if (!text || !Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-      return [];
-    }
-
-    const noSpeechProb = Number(item.noSpeechProb);
-
-    if (
-      Number.isFinite(noSpeechProb) &&
-      noSpeechProb > NO_SPEECH_THRESHOLD
-    ) {
-      return [];
-    }
-
-    return [
-      {
-        text,
-        startMs: Math.max(0, Math.round(startMs)),
-        // Guard against an inverted span, which would break duration
-        // maths downstream.
-        endMs: Math.max(Math.round(startMs), Math.round(endMs)),
-      },
-    ];
+/**
+ * Roster names first: they are the hints most likely to be misspelt and
+ * the ones the prompt cap should keep.
+ */
+export const combineHints = (roster?: string[], hints?: string[]): string[] => {
+  const seen = new Set<string>();
+  return [...(roster ?? []), ...(hints ?? [])].flatMap((raw) => {
+    const term = typeof raw === "string" ? raw.trim() : "";
+    const key = term.toLowerCase();
+    if (!term || seen.has(key)) return [];
+    seen.add(key);
+    return [term];
   });
 };
 
+const toBoundaryWords = (
+  words: TranscribeOptions["previousWords"]
+): BoundaryWord[] =>
+  (words ?? []).map((word) => ({
+    word: word.w,
+    startMs: word.startMs,
+    endMs: word.endMs,
+    channel:
+      word.channel === "mic" || word.channel === "remote" ? word.channel : null,
+  }));
+
 /**
- * Sends one audio file to the Whisper service.
+ * Transcribes one audio file with the configured provider
+ * (TRANSCRIPTION_PROVIDER).
  *
  * `offsetMs` shifts every timestamp into the meeting's timeline, which
  * live capture needs because each chunk is transcribed independently
- * and its own timestamps start at zero.
+ * and its own timestamps start at zero. `options` is optional so
+ * existing callers (and test fakes) keep their two-argument form.
  */
 export async function transcribeAudioDetailed(
   audioPath: string,
-  offsetMs = 0
+  offsetMs = 0,
+  options: TranscribeOptions = {}
 ): Promise<TranscriptionResult> {
-  // Multer stores a path relative to the backend's working
-  // directory; the Python service needs an absolute one.
-  const absolutePath = path.resolve(audioPath);
+  const provider = getTranscriptionProvider();
 
-  log.debug("Requesting transcription", { absolutePath, offsetMs });
+  const request: AsrRequest = {
+    filePath: audioPath,
+    offsetMs,
+    channelLayout: options.channelLayout ?? "mono",
+    language: options.language ?? null,
+    hints: combineHints(options.roster, options.hints),
+    ...(options.mode ? { mode: options.mode } : {}),
+    previousWords: toBoundaryWords(options.previousWords),
+  };
 
-  try {
-    const response = await axios.post(
-      `${env.aiServiceUrl}/transcribe`,
-      {
-        file_path: absolutePath,
-        offset_ms: offsetMs,
-      },
-      {
-        // Whisper runs on CPU and can take several minutes on a long
-        // recording, so allow far more than the axios default.
-        timeout: env.transcriptionTimeoutMs,
-      }
-    );
+  const output = await provider.transcribe(request);
 
-    const text = response.data?.text;
+  log.debug("Transcribed", {
+    provider: provider.name,
+    segments: output.segments.length,
+    channelLayout: request.channelLayout,
+  });
 
-    if (typeof text !== "string") {
-      throw UpstreamError(
-        "Transcription service returned an unexpected response."
-      );
-    }
-
-    const reportedDuration = Number(response.data?.durationMs);
-
-    return {
-      text: text.trim(),
-      segments: parseSegments(response.data?.segments),
-      durationMs: Number.isFinite(reportedDuration)
-        ? reportedDuration
-        : 0,
-      language:
-        typeof response.data?.language === "string"
-          ? response.data.language
-          : null,
-    };
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      log.error("Transcription request failed", error, {
-        aiServiceUrl: env.aiServiceUrl,
-        code: error.code,
-      });
-
-      if (error.code === "ECONNREFUSED") {
-        throw UpstreamError(
-          "Could not reach the transcription service. Please make " +
-            "sure it is running and try again."
-        );
-      }
-
-      if (error.code === "ECONNABORTED") {
-        throw UpstreamError(
-          "Transcription timed out. The recording may be too long."
-        );
-      }
-
-      const detail =
-        typeof error.response?.data?.detail === "string"
-          ? error.response.data.detail
-          : error.message;
-
-      throw UpstreamError(`Transcription failed: ${detail}`);
-    }
-
-    throw error;
-  }
+  return {
+    text: output.text,
+    segments: output.segments.map(toStoredSegment),
+    durationMs: output.durationMs,
+    language: output.language,
+    provider: provider.name,
+  };
 }
 
 /**
