@@ -67,6 +67,14 @@ stereo Opus so that option 1 stays "identical except the container".
 - One folder per recording. Audio is written to a `.part` file and moved
   into place, then the JSON metadata is written. A chunk exists only once
   its JSON does, and files are deleted only after a 200.
+- **Stop can never be lost.** The uploader thread and the UI both save
+  copies of a session. A plain overwrite once let the uploader's stale
+  `ended:false` replace the user's Stop, so `/end` was never sent (found
+  in the lead's e2e test). Now Stop writes an `ended` marker file under
+  the queue lock, and `save_session` merges with what is on disk:
+  `ended` only goes false to true, and `sessionId`/`meetingId` are
+  never cleared. This also stops a stale copy from creating a duplicate
+  backend session.
 - If the backend is down when recording starts, recording still starts.
   The session is created on the backend later, before the first upload.
 - Status handling: 200 or `duplicate:true` = done. 409 = retry the same

@@ -109,10 +109,9 @@ class Controller:
                 return
             self.recording = None
         rec.recorder.stop()  # flushes the final partial chunk
-        session = self.queue.get_session(rec.local_id)
-        if session is not None:
-            session.ended = True
-            self.queue.save_session(session)
+        # Atomic marker under the queue lock, never a read-modify-write of
+        # a copy the uploader thread may be saving concurrently.
+        self.queue.mark_ended(rec.local_id)
         self.uploader.wake()
 
     def elapsed_ms(self) -> int:

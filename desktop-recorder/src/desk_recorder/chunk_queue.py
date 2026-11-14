@@ -27,6 +27,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 SESSION_FILE = "session.json"
+#: Empty file meaning "the user pressed Stop". Separate from session.json
+#: so no stale in-memory copy can ever un-end a session (see save_session).
+ENDED_MARKER = "ended"
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
@@ -140,24 +143,67 @@ class ChunkQueue:
         self._changed()
         return session
 
+    def _load(self, folder: Path) -> QueuedSession | None:
+        data = _read_json(folder / SESSION_FILE)
+        if data is None or data.get("localId") != folder.name:
+            return None
+        session = QueuedSession.from_json(data)
+        if (folder / ENDED_MARKER).exists():
+            session.ended = True
+        return session
+
     def save_session(self, session: QueuedSession) -> None:
+        """Persist `session`, merged with what is on disk.
+
+        The uploader thread and the UI (stop_recording) both hold copies of
+        a session and save them back. A plain overwrite loses updates: the
+        uploader's stale copy (ended=False) used to overwrite the user's
+        Stop, so /end was never sent, and a stale UI copy could clear the
+        sessionId and create a duplicate backend session. So, under the
+        lock: `ended` only goes False -> True (and also lives in its own
+        marker file that only mark_ended() writes), and sessionId and
+        meetingId are never cleared once known. Saving a session whose
+        folder is already gone (finished or failed meanwhile) is a no-op.
+        """
         with self._lock:
-            _write_json(self.root / session.local_id / SESSION_FILE, session.to_json())
+            folder = self.root / session.local_id
+            if not folder.is_dir():
+                return
+            current = self._load(folder)
+            if current is not None:
+                session.ended = session.ended or current.ended
+                session.session_id = session.session_id or current.session_id
+                session.meeting_id = session.meeting_id or current.meeting_id
+            if session.ended:
+                (folder / ENDED_MARKER).touch()
+            _write_json(folder / SESSION_FILE, session.to_json())
+
+    def mark_ended(self, local_id: str) -> None:
+        """The user stopped this recording; /end goes out after the last chunk."""
+        with self._lock:
+            folder = self.root / local_id
+            if not folder.is_dir():
+                return
+            (folder / ENDED_MARKER).touch()
+            current = self._load(folder)
+            if current is not None:
+                self.save_session(current)
+        self._changed()
 
     def sessions(self) -> list[QueuedSession]:
         """Every queued recording, oldest first."""
         out: list[QueuedSession] = []
         with self._lock:
             for folder in sorted(p for p in self.root.iterdir() if p.is_dir()):
-                data = _read_json(folder / SESSION_FILE)
-                if data is not None and data.get("localId") == folder.name:
-                    out.append(QueuedSession.from_json(data))
+                session = self._load(folder)
+                if session is not None:
+                    out.append(session)
         out.sort(key=lambda s: (s.created_at, s.local_id))
         return out
 
     def get_session(self, local_id: str) -> QueuedSession | None:
-        data = _read_json(self.root / local_id / SESSION_FILE)
-        return QueuedSession.from_json(data) if data else None
+        with self._lock:
+            return self._load(self.root / local_id)
 
     def remove_session(self, local_id: str) -> None:
         with self._lock:
