@@ -41,6 +41,8 @@ interface Segment {
   text: string;
   startMs: number;
   endMs: number;
+  channel?: string | null;
+  words?: unknown;
 }
 
 export const store = {
@@ -49,6 +51,12 @@ export const store = {
   segments: [] as Segment[],
   meetings: new Map<string, { id: string; mode: string; status: string }>(),
   transcribeCalls: 0,
+  /** The 3rd argument of every transcribeAudioDetailed call. */
+  transcribeOptions: [] as unknown[],
+  /** When true, fake segments carry channel "remote" and word timings. */
+  withWords: false,
+  /** Meetings startSummary was called for. */
+  summariesStarted: [] as string[],
   /** When set, the next transcription waits for this promise. */
   gate: null as Promise<void> | null,
   failNext: false,
@@ -63,6 +71,9 @@ export const reset = () => {
   store.segments = [];
   store.meetings.clear();
   store.transcribeCalls = 0;
+  store.transcribeOptions = [];
+  store.withWords = false;
+  store.summariesStarted = [];
   store.gate = null;
   store.failNext = false;
 };
@@ -78,7 +89,10 @@ export const meetingService = {
     store.meetings.set(meeting.id, meeting);
     return meeting;
   },
-  summarizeMeeting: async () => null,
+  startSummary: async (meetingId: string) => {
+    store.summariesStarted.push(meetingId);
+    return { meetingId, status: "PROCESSING", processingStage: "SUMMARIZING" };
+  },
 };
 
 export const meetingRepo = {
@@ -179,11 +193,17 @@ export const liveChunkRepo = {
   },
 };
 
+const segmentsOf = (meetingId: string) =>
+  store.segments
+    .filter((s) => s.meetingId === meetingId)
+    .sort((a, b) => a.idx - b.idx);
+
 export const segmentRepo = {
-  findByMeetingId: async (meetingId: string) =>
-    store.segments
-      .filter((s) => s.meetingId === meetingId)
-      .sort((a, b) => a.idx - b.idx),
+  findByMeetingId: async (meetingId: string) => segmentsOf(meetingId),
+  findRecentByMeetingId: async (meetingId: string, limit: number) =>
+    segmentsOf(meetingId).slice(-limit),
+  findByIdxRange: async (meetingId: string, from: number, to: number) =>
+    segmentsOf(meetingId).filter((s) => s.idx >= from && s.idx < to),
   appendForMeeting: async (meetingId: string, segments: Omit<Segment, "meetingId" | "idx">[]) => {
     const existing = store.segments.filter((s) => s.meetingId === meetingId).length;
     segments.forEach((s, i) =>
@@ -207,8 +227,13 @@ export const segmentRepo = {
  * segments, shifted by offsetMs, so tests control the transcript.
  */
 export const speechService = {
-  transcribeAudioDetailed: async (filePath: string, offsetMs = 0) => {
+  transcribeAudioDetailed: async (
+    filePath: string,
+    offsetMs = 0,
+    options?: unknown
+  ) => {
     store.transcribeCalls++;
+    store.transcribeOptions.push(options);
 
     if (store.gate) await store.gate;
 
@@ -224,11 +249,23 @@ export const speechService = {
 
     return {
       text: parts.join(" "),
-      segments: parts.map((text, i) => ({
-        text,
-        startMs: offsetMs + i * 1000,
-        endMs: offsetMs + (i + 1) * 1000,
-      })),
+      segments: parts.map((text, i) => {
+        const startMs = offsetMs + i * 1000;
+        const segment = { text, startMs, endMs: startMs + 1000 };
+        if (!store.withWords) return segment;
+
+        const words = text.split(/\s+/);
+        const step = Math.floor(1000 / words.length);
+        return {
+          ...segment,
+          channel: "remote" as const,
+          words: words.map((w, k) => ({
+            w,
+            startMs: startMs + k * step,
+            endMs: startMs + (k + 1) * step,
+          })),
+        };
+      }),
       durationMs: parts.length * 1000,
       language: "en",
     };
