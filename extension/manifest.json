@@ -1,18 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Meeting AI Assistant",
-  "version": "1.0.0",
-  "description": "Transcribe and summarize Google Meet, Zoom, and Teams calls straight from your browser.",
+  "version": "1.1.0",
+  "description": "Record Google Meet, Zoom and Teams calls in the browser (your mic and the meeting on separate channels) for transcription and summaries.",
+  "minimum_chrome_version": "116",
 
-  "permissions": ["tabCapture", "activeTab", "storage", "offscreen"],
+  "permissions": ["tabCapture", "activeTab", "storage", "offscreen", "alarms"],
 
-  "host_permissions": [
-    "http://localhost:5000/*",
-    "https://meet.google.com/*",
-    "https://*.zoom.us/*",
-    "https://teams.microsoft.com/*",
-    "https://teams.live.com/*"
-  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
 
   "background": {
     "service_worker": "background.js",

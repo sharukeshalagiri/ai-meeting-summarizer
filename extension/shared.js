@@ -1,81 +1,125 @@
 /**
- * Values shared by the popup, service worker, and offscreen document.
+ * Values shared by the popup and the service worker (ES module).
  *
- * MV3 runs these in three separate contexts, so anything they must
- * agree on lives here rather than being repeated three times.
+ * The offscreen document cannot use chrome.storage, so it gets its
+ * settings in the START message instead of importing this file.
+ * content.js is a classic script and keeps its own copy of the
+ * platform rules it needs.
  */
 
-export const DEFAULT_API_BASE = "http://localhost:5000/api";
+export const DEFAULT_SETTINGS = {
+  apiBase: "http://localhost:5000/api",
+  deviceToken: "",
+  /** Where MeetingDetails lives: `${webBase}/meeting/<id>`. */
+  webBase: "http://localhost:5173",
+};
 
-/** Matches CHUNK_MS in the web app, so both produce comparable audio. */
-export const CHUNK_MS = 20_000;
+/** How long Stop waits for queued chunks before ending the session. */
+export const STOP_FLUSH_MS = 60_000;
 
-/** URL patterns to platform, used to label the meeting. */
+export const getSettings = async () => {
+  const stored = await chrome.storage.local.get(["apiBase", "deviceToken", "webBase"]);
+
+  return {
+    apiBase: stored.apiBase || DEFAULT_SETTINGS.apiBase,
+    deviceToken: stored.deviceToken || "",
+    webBase: stored.webBase || DEFAULT_SETTINGS.webBase,
+  };
+};
+
+export const saveSettings = (settings) =>
+  chrome.storage.local.set({
+    apiBase: settings.apiBase.trim().replace(/\/+$/, ""),
+    deviceToken: settings.deviceToken.trim(),
+    webBase: settings.webBase.trim().replace(/\/+$/, ""),
+  });
+
+/**
+ * Host permission pattern for the backend. Match patterns ignore the
+ * port, so http://localhost:5110/api becomes http://localhost/*.
+ */
+export const originPattern = (apiBase) => {
+  const url = new URL(apiBase);
+
+  return `${url.protocol}//${url.hostname}/*`;
+};
+
+export const hasBackendPermission = (apiBase) =>
+  chrome.permissions.contains({ origins: [originPattern(apiBase)] });
+
+/** Must run inside a user gesture (a click in the popup). */
+export const requestBackendPermission = (apiBase) =>
+  chrome.permissions.request({ origins: [originPattern(apiBase)] });
+
+/** URL -> contract platform (MEET | ZOOM | TEAMS) and a label. */
 const PLATFORM_PATTERNS = [
-  { pattern: /meet\.google\.com/i, platform: "GOOGLE_MEET", label: "Google Meet" },
-  { pattern: /zoom\.us/i, platform: "ZOOM", label: "Zoom" },
-  {
-    pattern: /teams\.(microsoft|live)\.com/i,
-    platform: "MICROSOFT_TEAMS",
-    label: "Microsoft Teams",
-  },
+  { pattern: /(^|\.)meet\.google\.com$/i, platform: "MEET", label: "Google Meet" },
+  { pattern: /(^|\.)zoom\.us$/i, platform: "ZOOM", label: "Zoom" },
+  { pattern: /^teams\.(microsoft|live)\.com$/i, platform: "TEAMS", label: "Microsoft Teams" },
 ];
 
-export const detectPlatform = (url) => {
-  if (!url) return null;
+const hostOf = (url) => {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+};
 
-  return (
-    PLATFORM_PATTERNS.find((entry) => entry.pattern.test(url)) ?? null
+export const detectPlatform = (url) => {
+  const parsed = url && hostOf(url);
+
+  if (!parsed) return null;
+
+  return PLATFORM_PATTERNS.find((entry) => entry.pattern.test(parsed.hostname)) ?? null;
+};
+
+/** Zoom's web client (app.zoom.us/wc/..., <org>.zoom.us/wc/...). */
+export const isZoomWebClient = (url) => {
+  const parsed = url && hostOf(url);
+
+  return Boolean(parsed && /zoom\.us$/i.test(parsed.hostname) && /^\/wc\//i.test(parsed.pathname));
+};
+
+/**
+ * A Zoom join/launch page (/j/123, /s/123, /w/123) that hands off to the
+ * desktop app. There is no call audio in this tab to record.
+ */
+export const isZoomLaunchPage = (url) => {
+  const parsed = url && hostOf(url);
+
+  return Boolean(
+    parsed &&
+      /zoom\.us$/i.test(parsed.hostname) &&
+      !isZoomWebClient(url) &&
+      /^\/(j|s|w|my)\//i.test(parsed.pathname)
   );
 };
 
 /**
- * Google Meet's landing page and Teams' app shell match the same host
- * as a real call, so the path is checked too: a lobby has nothing to
- * record.
+ * Whether the URL can be a call. Used to stop recording when the tab
+ * navigates away. Meet keeps the call URL after hanging up, so content.js
+ * also reports CALL_ENDED from the page itself.
  */
 export const isInMeeting = (url) => {
-  if (!url) return false;
+  const parsed = url && hostOf(url);
+  const detected = detectPlatform(url);
 
-  try {
-    const { hostname, pathname, search } = new URL(url);
+  if (!parsed || !detected) return false;
 
-    if (/meet\.google\.com$/i.test(hostname)) {
-      // A call URL is /abc-defg-hij; the home page is / or /landing.
-      return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(pathname);
-    }
-
-    if (/zoom\.us$/i.test(hostname)) {
-      return /\/(j|wc|s)\//i.test(pathname);
-    }
-
-    if (/teams\.(microsoft|live)\.com$/i.test(hostname)) {
-      return /meetup-join|\/v2\/|calling|conversations/i.test(
-        pathname + search
-      );
-    }
-  } catch {
-    return false;
+  if (detected.platform === "MEET") {
+    return /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(parsed.pathname);
   }
 
-  return false;
+  if (detected.platform === "ZOOM") return isZoomWebClient(url);
+
+  // Teams is a single-page app whose URLs change during a call; only
+  // leaving the Teams host counts as leaving.
+  return true;
 };
 
-export const getApiBase = async () => {
-  const stored = await chrome.storage.local.get("apiBase");
-
-  return stored.apiBase || DEFAULT_API_BASE;
-};
-
-/** Session state, kept in storage so the popup can reopen mid-capture. */
-export const getSession = async () => {
-  const stored = await chrome.storage.local.get("session");
-
-  return stored.session ?? null;
-};
-
-export const setSession = (session) =>
-  chrome.storage.local.set({ session });
-
-export const clearSession = () =>
-  chrome.storage.local.remove("session");
+/*
+ * The stored session and pendingEnds are written only by the service
+ * worker, through lib/capture/sessionState.js (serialized
+ * read-modify-write). Other pages read them via the STATUS message.
+ */
