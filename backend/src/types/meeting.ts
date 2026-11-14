@@ -17,3 +17,22 @@ export const MeetingStatus = {
 
 export type MeetingStatusValue =
   (typeof MeetingStatus)[keyof typeof MeetingStatus];
+
+/**
+ * Meeting.processingStage values (a plain String column, like status).
+ * The meeting page polls while the stage is SUMMARIZING.
+ *
+ * NO_SPEECH: a live capture ended with no transcribed speech (wrong tab
+ * shared, or silence throughout). That is not a failure, there is just
+ * nothing to summarize, so the meeting is COMPLETED with this stage. A
+ * late chunk with speech moves it back to TRANSCRIBED and summarizes.
+ */
+export const ProcessingStage = {
+  SUMMARIZING: "SUMMARIZING",
+  DONE: "DONE",
+  FAILED: "FAILED",
+  NO_SPEECH: "NO_SPEECH",
+} as const;
+
+export type ProcessingStageValue =
+  (typeof ProcessingStage)[keyof typeof ProcessingStage];

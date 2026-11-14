@@ -8,7 +8,11 @@ import * as summaryRepo from "../repositories/summary.repository";
 import * as transcriptRepo from "../repositories/transcript.repository";
 import * as userRepo from "../repositories/user.repository";
 import { BadRequest, NotFound } from "../types/errors";
-import { MeetingStatus, type MeetingStatusValue } from "../types/meeting";
+import {
+  MeetingStatus,
+  ProcessingStage,
+  type MeetingStatusValue,
+} from "../types/meeting";
 import { toSpeakerTranscript } from "../types/segment";
 import { toJsonValue } from "../types/summary";
 import { diarizeSegments } from "./diarization.service";
@@ -213,14 +217,10 @@ const summarizationInput = async (
 };
 
 /**
- * Meeting.processingStage values for the summary step. The meeting page
- * polls while the stage is SUMMARIZING.
+ * Meeting.processingStage values. Defined in types/meeting.ts, so code
+ * that mocks this service in tests still has them, and re-exported here.
  */
-export const ProcessingStage = {
-  SUMMARIZING: "SUMMARIZING",
-  DONE: "DONE",
-  FAILED: "FAILED",
-} as const;
+export { ProcessingStage };
 
 /** User-safe processingError messages (never upstream error text). */
 export const PROCESSING_ERRORS = {

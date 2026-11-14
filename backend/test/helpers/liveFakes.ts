@@ -18,6 +18,17 @@ interface Session {
   chunkCount: number;
   elapsedMs: number;
   lastRollingAtMs: number;
+  endedAt: Date | null;
+}
+
+interface FakeMeeting {
+  id: string;
+  title?: string;
+  mode: string;
+  status: string;
+  processingStage?: string | null;
+  processingError?: string | null;
+  durationSec?: number;
 }
 
 interface Chunk {
@@ -49,7 +60,11 @@ export const store = {
   sessions: new Map<string, Session>(),
   chunks: [] as Chunk[],
   segments: [] as Segment[],
-  meetings: new Map<string, { id: string; mode: string; status: string }>(),
+  meetings: new Map<string, FakeMeeting>(),
+  /** Flat transcript text by meeting id (transcriptRepo.upsert). */
+  transcripts: new Map<string, string>(),
+  /** Meetings whose summary is "still running" (summaryJob). */
+  runningSummaries: new Set<string>(),
   transcribeCalls: 0,
   /** The 3rd argument of every transcribeAudioDetailed call. */
   transcribeOptions: [] as unknown[],
@@ -70,6 +85,8 @@ export const reset = () => {
   store.chunks = [];
   store.segments = [];
   store.meetings.clear();
+  store.transcripts.clear();
+  store.runningSummaries.clear();
   store.transcribeCalls = 0;
   store.transcribeOptions = [];
   store.withWords = false;
@@ -90,9 +107,13 @@ export const meetingService = {
     return meeting;
   },
   startSummary: async (meetingId: string) => {
+    // Leaves the meeting row alone, so tests can see the state the
+    // caller left it in (e.g. TRANSCRIBED) before the summary ran.
     store.summariesStarted.push(meetingId);
     return { meetingId, status: "PROCESSING", processingStage: "SUMMARIZING" };
   },
+  summaryJob: (meetingId: string) =>
+    store.runningSummaries.has(meetingId) ? Promise.resolve() : undefined,
 };
 
 export const meetingRepo = {
@@ -101,8 +122,34 @@ export const meetingRepo = {
     meeting.status = "LIVE";
     return meeting;
   },
-  markEnded: async () => undefined,
-  updateStatus: async () => undefined,
+  markEnded: async (id: string, durationSec: number) => {
+    const meeting = store.meetings.get(id);
+    if (meeting) meeting.durationSec = durationSec;
+  },
+  updateDuration: async (id: string, durationSec: number) => {
+    const meeting = store.meetings.get(id);
+    if (meeting) meeting.durationSec = durationSec;
+  },
+  updateStatus: async (id: string, status: string) => {
+    const meeting = store.meetings.get(id);
+    if (meeting) meeting.status = status;
+  },
+  updateProcessing: async (
+    id: string,
+    data: { stage?: string | null; error?: string | null; status?: string }
+  ) => {
+    const meeting = store.meetings.get(id);
+    if (!meeting) return;
+    if (data.stage !== undefined) meeting.processingStage = data.stage;
+    if (data.error !== undefined) meeting.processingError = data.error;
+    if (data.status !== undefined) meeting.status = data.status;
+  },
+};
+
+export const transcriptRepo = {
+  upsert: async (meetingId: string, content: string) => {
+    store.transcripts.set(meetingId, content);
+  },
 };
 
 export const liveSessionRepo = {
@@ -123,6 +170,7 @@ export const liveSessionRepo = {
       chunkCount: 0,
       elapsedMs: 0,
       lastRollingAtMs: 0,
+      endedAt: null,
     };
     store.sessions.set(session.id, session);
     return session;
@@ -146,8 +194,12 @@ export const liveSessionRepo = {
     return { ...session };
   },
   end: async (id: string) => {
-    store.sessions.get(id)!.status = "ENDED";
+    const session = store.sessions.get(id)!;
+    session.status = "ENDED";
+    session.endedAt = new Date();
   },
+  findStale: async () =>
+    [...store.sessions.values()].filter((s) => s.status === "ACTIVE"),
   markRollingAt: async () => undefined,
   addRollingSummary: async () => undefined,
 };

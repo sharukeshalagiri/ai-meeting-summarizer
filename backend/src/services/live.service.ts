@@ -15,7 +15,7 @@ import {
   type MeetingMode,
 } from "../types/capture";
 import { AppError, BadRequest, NotFound } from "../types/errors";
-import { MeetingStatus } from "../types/meeting";
+import { MeetingStatus, ProcessingStage } from "../types/meeting";
 import { toSpeakerTranscript } from "../types/segment";
 import { toRollingJsonValue } from "../types/summary";
 import { diarizeSegments } from "./diarization.service";
@@ -295,6 +295,122 @@ const removeFile = (filePath: string) =>
     // A leftover file is not worth failing the request over.
   });
 
+/**
+ * How long after a session ends it still accepts new chunks.
+ *
+ * Recorders keep a durable queue and drain it before /end, but a
+ * network drop, a laptop sleep or the idle reaper can still end a
+ * session while chunks are waiting. Within this window they are
+ * transcribed and the meeting is re-summarized; after it, 410.
+ */
+export const LATE_CHUNK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Debounce before re-summarizing after a late chunk. A backlog arrives
+ * as a burst, and each chunk resets the timer, so the burst costs one
+ * summary rather than one per chunk.
+ */
+export const LATE_RESUMMARY_DELAY_MS = 2 * 60 * 1000;
+
+const acceptsLateChunks = (endedAt: Date | null | undefined): boolean =>
+  endedAt != null &&
+  Date.now() - new Date(endedAt).getTime() <= LATE_CHUNK_WINDOW_MS;
+
+/**
+ * Pending re-summaries, by session id. In memory on purpose (like the
+ * background summary itself): a restart during the debounce loses the
+ * timer and the summary stays stale until another chunk arrives.
+ * w3-jobs (pg-boss) makes this durable; see docs/decisions/chore-pair-2.md.
+ */
+const resummaryTimers = new Map<string, NodeJS.Timeout>();
+
+/**
+ * (Re)starts the debounce for re-summarizing an ended session's meeting.
+ * Each call resets the timer, so it fires once, after the last chunk.
+ */
+export const scheduleResummary = (sessionId: string): void => {
+  const pending = resummaryTimers.get(sessionId);
+  if (pending) clearTimeout(pending);
+
+  const timer = setTimeout(() => {
+    resummaryTimers.delete(sessionId);
+    void resummarizeEnded(sessionId).catch((error) =>
+      log.error("Late re-summary failed", error, { sessionId })
+    );
+  }, LATE_RESUMMARY_DELAY_MS);
+
+  // A pending re-summary must not keep the process (or a test) alive.
+  timer.unref?.();
+
+  resummaryTimers.set(sessionId, timer);
+};
+
+/** Drops every pending re-summary (tests and shutdown). */
+export const cancelScheduledResummaries = (): void => {
+  for (const timer of resummaryTimers.values()) clearTimeout(timer);
+  resummaryTimers.clear();
+};
+
+/**
+ * Writes the meeting's flat transcript from its segments and marks it
+ * TRANSCRIBED. Shared by /end and the late-chunk re-summary, so both
+ * build the transcript the same way.
+ */
+const writeTranscript = async (
+  meetingId: string,
+  segments: { text: string }[]
+): Promise<void> => {
+  await transcriptRepo.upsert(
+    meetingId,
+    segments.map((segment) => segment.text).join(" ")
+  );
+
+  // Clearing the stage takes a NO_SPEECH meeting out of that state.
+  await meetingRepo.updateProcessing(meetingId, {
+    stage: null,
+    error: null,
+    status: MeetingStatus.TRANSCRIBED,
+  });
+};
+
+/**
+ * Rebuilds an ended session's transcript and duration from its segments
+ * (late chunks included) and starts the summary again. A summary that is
+ * still running would not pick the new segments up, so it waits another
+ * debounce period instead.
+ */
+const resummarizeEnded = async (sessionId: string): Promise<void> => {
+  const session = await liveRepo.findById(sessionId);
+  if (!session) return;
+
+  if (meetingService.summaryJob(session.meetingId)) {
+    log.info("Summary still running; late re-summary postponed", {
+      sessionId,
+    });
+    scheduleResummary(sessionId);
+    return;
+  }
+
+  const segments = await segmentRepo.findByMeetingId(session.meetingId);
+  if (segments.length === 0) return;
+
+  await meetingRepo.updateDuration(
+    session.meetingId,
+    Math.round(session.elapsedMs / 1000)
+  );
+
+  // Also recovers a meeting that ended with no speech (NO_SPEECH).
+  await writeTranscript(session.meetingId, segments);
+
+  log.info("Re-summarizing after late chunks", {
+    sessionId,
+    meetingId: session.meetingId,
+    segments: segments.length,
+  });
+
+  await meetingService.startSummary(session.meetingId);
+};
+
 /** Thrown while another upload of the same chunk is being processed. */
 const stillProcessing = () =>
   new AppError(
@@ -313,6 +429,11 @@ const stillProcessing = () =>
  *
  * The chunk file is kept (LiveChunk.path) for later re-processing,
  * unlike the legacy path, which deletes it.
+ *
+ * Late chunks: an ENDED session still accepts new seqs for
+ * LATE_CHUNK_WINDOW_MS (410 after that; a transcribed seq always
+ * replays). The session stays ENDED, no rolling summary runs, and a
+ * chunk that adds speech schedules a debounced re-summary.
  */
 export const ingestContractChunk = async (input: {
   sessionId: string;
@@ -331,7 +452,9 @@ export const ingestContractChunk = async (input: {
     return replay(existing.result);
   }
 
-  if (session.status !== "ACTIVE") {
+  // An ended session still takes chunks for LATE_CHUNK_WINDOW_MS (they
+  // trigger a re-summary below); only after that is it gone for good.
+  if (session.status !== "ACTIVE" && !acceptsLateChunks(session.endedAt)) {
     await removeFile(input.filePath);
     throw new AppError("This live session has already ended.", 410);
   }
@@ -414,14 +537,23 @@ export const ingestContractChunk = async (input: {
       input.startOffsetMs + input.durationMs
     );
 
-    const summarized = await maybeRollingSummary(
-      {
-        id: session.id,
-        meetingId: session.meetingId,
-        lastRollingAtMs: session.lastRollingAtMs,
-      },
-      updated.elapsedMs
-    );
+    // Read after the segments are written: a chunk claimed before /end
+    // that finishes after it sees ENDED here, so its segments are either
+    // in the /end transcript or picked up by the re-summary.
+    const ended = updated.status !== "ACTIVE";
+
+    // Rolling summaries are for a meeting in progress; an ended one gets
+    // its final summary re-run instead.
+    const summarized = ended
+      ? false
+      : await maybeRollingSummary(
+          {
+            id: session.id,
+            meetingId: session.meetingId,
+            lastRollingAtMs: session.lastRollingAtMs,
+          },
+          updated.elapsedMs
+        );
 
     const response = {
       sessionId: session.id,
@@ -439,6 +571,11 @@ export const ingestContractChunk = async (input: {
       segments.length,
       response as unknown as Prisma.InputJsonObject
     );
+
+    // Silent chunks add nothing to summarize, so they never schedule.
+    if (ended && segments.length > 0) {
+      scheduleResummary(session.id);
+    }
 
     log.debug("Contract chunk ingested", {
       sessionId: session.id,
@@ -523,14 +660,17 @@ export const endSession = async (sessionId: string) => {
   await meetingRepo.markEnded(session.meetingId, durationSec);
 
   if (segments.length === 0) {
-    // Nothing was captured -- usually the wrong tab was shared, or it
-    // was silent throughout.
-    await meetingRepo.updateStatus(
-      session.meetingId,
-      MeetingStatus.FAILED
-    );
+    // Nothing was captured: usually the wrong tab was shared, or it was
+    // silent throughout. That is not a processing failure, so the
+    // meeting is COMPLETED with stage NO_SPEECH (no retry offered). A
+    // late chunk with speech re-summarizes it.
+    await meetingRepo.updateProcessing(session.meetingId, {
+      stage: ProcessingStage.NO_SPEECH,
+      error: null,
+      status: MeetingStatus.COMPLETED,
+    });
 
-    log.warn("Live session ended with no transcript", {
+    log.warn("Live session ended with no speech", {
       sessionId: session.id,
     });
 
@@ -541,15 +681,7 @@ export const endSession = async (sessionId: string) => {
     };
   }
 
-  await transcriptRepo.upsert(
-    session.meetingId,
-    segments.map((segment) => segment.text).join(" ")
-  );
-
-  await meetingRepo.updateStatus(
-    session.meetingId,
-    MeetingStatus.TRANSCRIBED
-  );
+  await writeTranscript(session.meetingId, segments);
 
   log.info("Live session ended", {
     sessionId: session.id,
