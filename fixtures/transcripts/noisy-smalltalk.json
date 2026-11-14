@@ -1,0 +1,116 @@
+[
+  {
+    "speaker": "Kim",
+    "text": "Did anyone watch the football last night? What a finish.",
+    "startMs": 0,
+    "endMs": 3800
+  },
+  {
+    "speaker": "Jo",
+    "text": "I fell asleep at half time, don't spoil it.",
+    "startMs": 4200,
+    "endMs": 7600
+  },
+  {
+    "speaker": "Lee",
+    "text": "Too late, it was three nil at the end.",
+    "startMs": 8000,
+    "endMs": 11400
+  },
+  {
+    "speaker": "Jo",
+    "text": "Oh come on, Lee.",
+    "startMs": 11800,
+    "endMs": 14200
+  },
+  {
+    "speaker": "Kim",
+    "text": "Anyway, the barbecue at my place on Saturday is still on if the weather holds.",
+    "startMs": 14600,
+    "endMs": 20400
+  },
+  {
+    "speaker": "Pat",
+    "text": "I'll bring the veggie burgers again, people actually ate them last time.",
+    "startMs": 20800,
+    "endMs": 25400
+  },
+  {
+    "speaker": "Lee",
+    "text": "I'm out, I'm on vacation in Lisbon from Friday.",
+    "startMs": 25800,
+    "endMs": 29200
+  },
+  {
+    "speaker": "Kim",
+    "text": "Lisbon in November? Nice, eat a pastel de nata for me.",
+    "startMs": 29600,
+    "endMs": 33800
+  },
+  {
+    "speaker": "Pat",
+    "text": "Oh, before I forget, the company domain expires on Thursday and the renewal reminder keeps bouncing.",
+    "startMs": 34200,
+    "endMs": 40200
+  },
+  {
+    "speaker": "Pat",
+    "text": "Jo, can you renew the domain? You have the registrar login.",
+    "startMs": 40600,
+    "endMs": 44800
+  },
+  {
+    "speaker": "Jo",
+    "text": "Yes, I'll renew the domain today, right after this.",
+    "startMs": 45200,
+    "endMs": 48600
+  },
+  {
+    "speaker": "Pat",
+    "text": "Thanks, that would have been embarrassing.",
+    "startMs": 49000,
+    "endMs": 51400
+  },
+  {
+    "speaker": "Lee",
+    "text": "Speaking of embarrassing, my cat sat on my keyboard during the all-hands yesterday.",
+    "startMs": 51800,
+    "endMs": 56800
+  },
+  {
+    "speaker": "Kim",
+    "text": "I saw that, the whole company saw that.",
+    "startMs": 57200,
+    "endMs": 60200
+  },
+  {
+    "speaker": "Pat",
+    "text": "Should we order pizza for Friday lunch?",
+    "startMs": 60600,
+    "endMs": 63200
+  },
+  {
+    "speaker": "Kim",
+    "text": "Sure, maybe, let's see who's around.",
+    "startMs": 63600,
+    "endMs": 66000
+  },
+  {
+    "speaker": "Lee",
+    "text": "Pineapple or no pineapple, that's the real question.",
+    "startMs": 66400,
+    "endMs": 69400
+  },
+  {
+    "speaker": "Jo",
+    "text": "No pineapple, this is not up for discussion.",
+    "startMs": 69800,
+    "endMs": 72800
+  },
+  {
+    "speaker": "Kim",
+    "text": "Okay, back to work everyone.",
+    "startMs": 73200,
+    "endMs": 75600
+  }
+]
