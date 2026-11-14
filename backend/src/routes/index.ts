@@ -14,6 +14,7 @@ import meetingRoutes from "./meeting.routes";
 import transcriptRoutes from "./transcript.routes";
 import userRoutes from "./user.routes";
 import w1SumRoutes from "./w1-sum.routes";
+import w2SpkRoutes from "./w2-spk.routes";
 
 /**
  * Single place where the API surface is assembled, so the full set of
@@ -37,5 +38,8 @@ router.get("/chat/:id", getConversation);
 
 // w1-sum: mode, re-summarize and action item review under /meetings.
 router.use("/meetings", w1SumRoutes);
+
+// w2-spk: speakers (list, rename, accept a name suggestion) under /meetings.
+router.use("/meetings", w2SpkRoutes);
 
 export default router;
