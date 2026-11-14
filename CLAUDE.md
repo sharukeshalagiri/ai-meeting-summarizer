@@ -22,9 +22,11 @@ jobs, tests, CI, measured accuracy).
 
 The current code is a working prototype of upload and browser-tab capture,
 plus the shared foundation for parallel work: the capture contract, the
-reserved schema, the UI contract, ownership rules and CI. Stereo channel
-separation, the desktop recorder, auth, background jobs and evaluation do
-not exist yet. They are the waves' work.
+reserved schema, the UI contract, ownership rules and CI. Pair 1 has
+added stereo-aware transcription with faster-whisper (w1-asr) and the
+summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. The
+desktop recorder, auth, durable background jobs and evaluation do not
+exist yet. They are the waves' work.
 
 ## Operating mode (every session follows this)
 
@@ -39,6 +41,9 @@ a command you can run.**
 - **(b)** Merging any PR, or pushing to `main`.
 - **(c)** Schema or migration changes (`backend/prisma/**`).
 - **(d)** Deleting files, branches, worktrees, databases or data.
+  **Exception:** you may delete an uncommitted scratch file that your
+  own session created, without asking. Anything committed, or created
+  by someone else, still goes through this gate.
 - **(e)** Anything involving accounts, API keys, costs, public releases,
   GitHub settings, or other people's data.
 - **(f)** A real-world test only the user can do: a live Meet/Zoom call,
@@ -62,7 +67,7 @@ decision.
 | --- | --- | --- | --- |
 | `frontend/` | React 19, Vite 8, Tailwind 4, react-router 7 | 5173 | `FRONTEND_PORT` |
 | `backend/` | Express 5, TypeScript, Prisma 6, Gemini (`@google/genai`) | 5000 | `PORT` |
-| `ai-service/` | FastAPI + openai-whisper (CPU) | 8000 | `AI_SERVICE_PORT` |
+| `ai-service/` | FastAPI + faster-whisper (CPU int8 / CUDA float16) | 8000 | `AI_SERVICE_PORT` |
 | PostgreSQL | `pgvector/pgvector:pg16` via `docker-compose.yml` | 5433 (host) | `POSTGRES_PORT` |
 | `extension/` | Chrome MV3 (incomplete, see below) | — | — |
 
@@ -77,18 +82,27 @@ NewMeeting.tsx
   POST /api/meetings                         create Meeting (status CREATED)
   POST /api/meetings/:id/audio  (multer)     file -> backend/uploads/meetings
   POST /api/meetings/:id/transcribe
-        speech.service -> ai-service POST /transcribe { file_path (absolute), offset_ms }
-        parseSegments drops noSpeechProb > 0.75
+        speech.service -> transcription provider (TRANSCRIPTION_PROVIDER: local | deepgram)
+          local: ai-service POST /transcribe { file_path (absolute), offset_ms, channel_layout, hints }
+        parseSegments drops noSpeechProb > 0.75; segments keep channel + words
         diarization.service (Gemini infers speakers from text)
-        -> Transcript + TranscriptSegment rows, durationSec
-  POST /api/meetings/:id/summarize
-        summary.service (Gemini, SUMMARY_SCHEMA) -> parseStructuredSummary
-        -> Summary (markdown + data JSON + sentiment), ActionItem rows
+        -> Transcript + TranscriptSegment rows (channel, words), durationSec
+  POST /api/meetings/:id/summarize          202, returns at once
+        background, in-process (meeting.service startSummary):
+        processingStage SUMMARIZING -> DONE | FAILED
+        w1-sum pipeline v2 (CLASSIFY? CLEAN EXTRACT VERIFY) -> noiseLabel per segment
+          on error: processingError set, legacy generateSummary used instead
+        -> Summary (data.schemaVersion 2, data.pipeline "v2" | "legacy"), ActionItem rows
+  MeetingDetails polls GET /api/meetings/:id every 5 s while SUMMARIZING
   POST /api/meetings/:id/index
         embedding.service -> SegmentEmbedding (float8[], unit-normalized)
 ```
 
-`POST /api/meetings/:id/upload` runs the whole pipeline in one request.
+`POST /api/meetings/:id/upload` transcribes in the request, then starts
+the same background summary (`summary: null` in its response). The
+in-process job is lost if the backend restarts. Pair 4 (w3-jobs)
+replaces it with pg-boss. `POST /:id/resummarize` (w1-sum) is still a
+long synchronous request.
 **The ai-service reads the file by path**, so it must share a filesystem
 with the backend.
 
@@ -212,9 +226,10 @@ adds the root package as a `file:..` dependency.
 - The backend runs without the ai-service: everything except
   transcription works, and `/transcribe` returns a 502 with "Could not
   reach the transcription service" (smoke-tested).
-- `npm run setup:ai` installs openai-whisper and torch, which is large. For
-  tests only, `npm run setup:ai:test` installs fastapi, httpx and pytest.
-  The tests stub out `whisper`.
+- `npm run setup:ai` installs faster-whisper (no torch), with PyAV pinned
+  `<19`. For tests only, `npm run setup:ai:test` installs fastapi, httpx,
+  python-multipart and pytest. The tests stub out `faster_whisper`.
+  `npm run bench:asr` runs the transcription benchmark.
 - `backend` runs `prisma generate` on `postinstall`. Run
   `npm --prefix backend run generate` after editing `schema.prisma`.
 - New migration: `cd backend && npx prisma migrate dev --name <name>`.
@@ -237,6 +252,7 @@ fails at boot):
 | `PORT` | 5000 | |
 | `LOG_LEVEL` | debug (info in prod) | debug, info, warn or error |
 | `GEMINI_MODEL` | gemini-flash-latest | summaries, diarization, chat |
+| `GEMINI_CLEAN_MODEL` | gemini-flash-lite-latest | the summary pipeline's cheap CLEAN/CLASSIFY steps |
 | `EMBEDDING_MODEL` | gemini-embedding-2 | |
 | `EMBEDDING_DIMS` | 768 | stored per row; search filters on it |
 | `AI_SERVICE_URL` | http://localhost:8000 | |
@@ -249,9 +265,14 @@ fails at boot):
 | `ROLLING_SUMMARY_MINUTES` | 7 | |
 | `LIVE_SESSION_IDLE_MINUTES` | 10 | |
 | `DEVICE_TOKEN` | unset | Bearer token for `/api/live`. Unset in development: allowed, with a warning. **Required in production**, or the backend refuses to boot. |
+| `TRANSCRIPTION_PROVIDER` | local | `local` (ai-service) or `deepgram`; anything else fails at boot |
+| `DEEPGRAM_API_KEY` | unset | required when the provider is `deepgram` (paid per audio minute) |
+| `DEEPGRAM_MODEL` | nova-2 | |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
-precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (base).
+precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (small), `WHISPER_DEVICE`
+(auto), `WHISPER_COMPUTE_TYPE` (int8 on CPU, float16 on CUDA),
+`WHISPER_LANGUAGE` (empty = auto-detect).
 
 **`frontend/.env.local`** (main checkout) or **`frontend/.env`** (written
 by `worktree:env`): `VITE_API_URL` (http://localhost:5000/api),

@@ -43,12 +43,23 @@ keep it running (`npm run dev:ai` there); don't start your own.
   `backend/src/app.ts`, `backend/src/lib/env.ts`, `frontend/src/App.tsx`,
   `ai-service/main.py`, every `package.json` / `package-lock.json`, and
   every `.env.example`.
-- **New dependencies only in a package you own.** On a lockfile conflict
-  during rebase, take origin/main's lockfile with
-  `git checkout --ours <lockfile>` (during a rebase, "ours" is the branch
-  you are rebasing onto, i.e. origin/main). Then re-run `npm install` in
-  that package so your dependency is added back, `git add` the lockfile
-  and `git rebase --continue`. Never hand-merge a lockfile.
+- **New dependencies only in a package you own.** On a lockfile
+  conflict, take origin/main's lockfile, re-run `npm install` in that
+  package so your dependency is added back, then `git add` the lockfile
+  and continue. Never hand-merge a lockfile. Which side is origin/main
+  depends on the operation:
+  - during a **rebase**, origin/main is "ours": `git checkout --ours <lockfile>`, then `git rebase --continue`.
+  - during a **merge**, origin/main is "theirs": `git checkout --theirs <lockfile>`, then `git commit`.
+- **Commit locally after each milestone** (for example `wip: providers
+  done`). WIP commits are fine and need no squash, because PRs are
+  squash-merged on GitHub. Never push before the finish protocol.
+- **Catching up with main:** rebase only before a branch's first push.
+  Once a branch is pushed, catch up with `git fetch origin && git merge
+  origin/main`. A rebased branch would need a force-push, and
+  force-pushing is denied.
+- **Deleting files:** you may delete an uncommitted scratch file that
+  your own session created. Anything committed, or created by someone
+  else, needs the engineer's OK (gate d).
 - Segment references (summary evidence, citations, corrections,
   `jumpToSegment`) always use **`TranscriptSegment.idx`, never array
   positions**. Live idx values are sparse (`seq * 1000 + i`).
@@ -68,7 +79,9 @@ Run these in order and fix any failure yourself before moving on:
 3. Write `docs/decisions/<track>.md`: the decisions, the alternatives
    considered and anything the integrator must know.
 4. Commit.
-5. `git fetch origin && git rebase origin/main`.
+5. Catch up with main: `git fetch origin && git rebase origin/main` if
+   the branch has never been pushed, otherwise `git merge origin/main`
+   (see "Catching up with main" above).
 6. Re-run the tests from step 1.
 7. Push your branch by name: `git push -u origin <your-branch>` (e.g.
    `worktree-w1-sum` or `w1-sum/impl`). A bare `git push` is denied,
@@ -109,3 +122,20 @@ subagent (`.claude/agents/track-builder.md`, `isolation: worktree`).
    command), it says so and the lead does that step.
 6. **Merging.** Only the lead merges, and only after the engineer
    approves (gate b). Subagents never merge.
+
+## Crash recovery
+
+If a session or subagent dies mid-build (power loss, crash), its
+uncommitted work is still on disk in its worktree, but a new subagent
+may not be able to run git in that worktree.
+
+1. Relaunch the builder in a **new worktree** from the same base, with
+   its original brief and a resume note that names the old worktree.
+2. It copies the old worktree's work over, checks it first (diff
+   against the approved plan, files cut off mid-write, typecheck,
+   tests), fixes anything damaged, and reports one line: "integrity OK"
+   or what it fixed.
+3. It pushes as **`<track>/impl-resume`**. `check-ownership` maps this
+   name to the track, like `<track>/impl`.
+4. The lead lists the old worktree and its branch for cleanup (gate d).
+   Neither is deleted without the engineer's OK.

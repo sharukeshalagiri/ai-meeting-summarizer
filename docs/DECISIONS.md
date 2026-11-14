@@ -213,3 +213,91 @@ middleware is the single place to swap.
   torch in every worktree costs gigabytes and minutes for no benefit.
 - Prisma changes are allowed only on `schema/` branches, because two
   parallel migrations are the one conflict a rebase cannot fix safely.
+
+## Transcription: faster-whisper, one pass per stereo channel (w1-asr)
+
+Full log: [docs/decisions/w1-asr.md](decisions/w1-asr.md).
+
+- **Engine:** faster-whisper (CTranslate2) replaced openai-whisper. It
+  uses the same weights at about 4x the CPU speed with int8, needs no
+  torch, and ships Silero VAD and word timestamps. whisper.cpp needs a
+  native build on every OS, and WhisperX pulls torch back in.
+  `requirements.txt` pins `av<19`, because PyAV 19 broke
+  faster-whisper 1.2.1.
+- **Stereo:** `stereo-mic-left` is transcribed one channel at a time,
+  left as `channel: "mic"` and right as `"remote"`, then merged by start
+  time. A silent channel is skipped. A mic segment that overlaps a
+  remote segment and matches its text is dropped as echo.
+- **Chunk boundaries (D1):** VAD runs inside each chunk, and repeated
+  words at the edge between chunks are removed, using the previous
+  chunk's trailing words. There is no audio overlap, so the capture
+  contract did not change.
+- **Hallucination guards** are named constants in
+  `ai-service/asr/guards.py`: no speech, loops, repeated phrases and
+  non-speech markers.
+- **Providers:** `TRANSCRIPTION_PROVIDER` is `local` (the default) or
+  `deepgram`. Deepgram is paid, so it is tested only with fake
+  responses (D2).
+- **Benchmark** (`npm run bench:asr`): 0.61× real time and a word error
+  rate of 0 on an 11-second public-domain clip, with the small model on
+  CPU. This is a smoke test, not an accuracy claim.
+
+## Summaries: a staged pipeline, versioned prompts, dates resolved in code (w1-sum)
+
+Full log: [docs/decisions/w1-sum.md](decisions/w1-sum.md).
+
+- **Pipeline:** CLASSIFY (only in AUTO mode), then CLEAN, which labels
+  every segment with a noise label using the cheap model
+  (`GEMINI_CLEAN_MODEL`, D5) and never deletes text. EXTRACT reads only
+  substantive segments and works map-reduce within a token budget.
+  VERIFY drops unsupported items and sets a confidence. A final step in
+  code checks evidence idx values, copies speaker and startMs from the
+  segment rows and caps lengths. One big prompt let small talk leak
+  into tasks.
+- **Prompts are versioned files** (`backend/src/prompts/*.vN.ts`).
+  `Summary.data.prompts` records which versions produced each summary.
+  A new version is a new file, never an edit of an old one.
+- **Dates:** the model quotes the deadline as spoken, and chrono-node
+  resolves it from the meeting start in the viewer's timezone. Vague
+  phrases stay null. Models are bad at calendar arithmetic, and they
+  don't know the timezone.
+- **`Summary.data` schema version 2** carries mode sections, and every
+  item has `evidence: {idx, speaker, startMs}[]`, a confidence and
+  `needsReview` (below 0.6). Rows without `schemaVersion` are version 1
+  and still render.
+- **Mode choice and task reviews** are stored as `Correction` rows
+  through `record()`.
+- **Real-model check (D4):** 14 Gemini calls on the two synthetic
+  fixtures found 7/7 and 4/4 of the expected items, with no invalid
+  evidence. Gemini 503s made each fixture take 5–9 minutes, which is
+  why summarizing moved out of the HTTP request (see the wiring entry
+  below).
+
+## Summaries run in the background, in-process, until real jobs exist (Pair 1 wiring)
+
+**Constraint:** with Gemini retrying 503s, the v2 pipeline took 5–9
+minutes per meeting, longer than Node's default 5-minute
+`requestTimeout`.
+
+- `POST /summarize` returns 202, and live `/end` and `/upload` return
+  immediately. `meeting.service.startSummary` claims the meeting
+  synchronously, so two requests cannot start two runs. It sets
+  `processingStage` SUMMARIZING and runs the summary in the same
+  process. The outcome is written to the Meeting row as DONE or FAILED,
+  with `processingProgress` and a user-safe `processingError`.
+  `MeetingDetails` polls every 5 s and gives up after about 20 minutes,
+  then offers a retry.
+- **Fallback:** if the v2 pipeline throws, the legacy single-prompt
+  `generateSummary` writes the summary instead, and
+  `Summary.data.pipeline` records `"v2"` or `"legacy"`. No schema change
+  was needed.
+- **Cost, accepted for now:** a backend restart loses a run in
+  progress. Pair 4 (w3-jobs) replaces this with pg-boss.
+  `/resummarize` is still synchronous, and these paths resolve dates in
+  UTC.
+- **The rest of the wiring:** segments store `channel` and `words`.
+  `setNoiseLabels` writes CLEAN's labels keyed by `(meetingId, idx)`.
+  `Meeting.mode` is written by `PATCH /mode`. Live chunks pass the
+  channel layout, the hints, the roster and the previous chunk's
+  trailing words (by `seq - 1`, so out-of-order arrival still works) to
+  the transcription provider.
