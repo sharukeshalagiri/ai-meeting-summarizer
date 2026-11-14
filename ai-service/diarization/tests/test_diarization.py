@@ -356,5 +356,5 @@ def test_default_model_is_registered_with_a_permissive_licence():
 def test_main_registers_the_routes():
     import main
 
-    paths = {route.path for route in main.app.routes}
+    paths = set(main.app.openapi()["paths"])
     assert {"/diarize", "/diarize/health", "/transcribe"} <= paths
