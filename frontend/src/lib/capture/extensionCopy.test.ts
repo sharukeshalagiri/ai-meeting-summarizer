@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildCapture } from "../../../../extension/scripts/build-capture.mjs";
+import { checkExtensionCopy } from "./extensionCopy.check.mjs";
 
 /**
  * The extension loads a committed, transpiled copy of this folder
  * (extension/lib/capture). If this fails, run:
  *   node extension/scripts/build-capture.mjs
+ *
+ * The script compares file text with CRLF normalized to LF, so the check
+ * passes on a Windows (autocrlf) checkout as it does in CI.
  */
 describe("extension/lib/capture", () => {
   it("is up to date with frontend/src/lib/capture", () => {
-    expect(buildCapture({ check: true })).toEqual([]);
+    const { status, stderr } = checkExtensionCopy();
+
+    expect(stderr).toBe("");
+    expect(status).toBe(0);
   });
 });
