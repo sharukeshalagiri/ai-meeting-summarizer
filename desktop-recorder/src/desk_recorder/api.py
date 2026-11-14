@@ -78,4 +78,8 @@ class ApiClient:
                               data=fields, files=files)
 
     def end_session(self, session_id: str) -> ApiResponse:
-        return self._send("POST", f"/sessions/{session_id}/end", self.CHUNK_TIMEOUT_S, json={})
+        """Ends the session. The backend answers right away with
+        `{meetingId, alreadyEnded, summary: null, summarizing: true}` and
+        summarizes in the background (the web page polls the meeting), so
+        any 2xx means done and the short JSON timeout applies."""
+        return self._send("POST", f"/sessions/{session_id}/end", self.JSON_TIMEOUT_S, json={})

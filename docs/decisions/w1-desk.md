@@ -74,7 +74,10 @@ stereo Opus so that option 1 stays "identical except the container".
   session. 401 = pause all uploads until Settings change. 410 = move the
   session's audio to `failed/`. 400, 404 and other 4xx = move that chunk
   to `failed/` with a `reason.txt`. Audio is never silently deleted.
-- `/end` is sent only after every chunk is confirmed.
+- `/end` is sent only after every chunk is confirmed. Since #7, `/end`
+  returns immediately (`summary: null, summarizing: true`) and the
+  summary runs in the background, so any 2xx finishes the local session
+  and `/end` uses the short 30 s timeout.
 - Chunk upload timeout is 300 s, because the backend transcribes before
   it answers. A timeout is safe: the retry gets 409 and then
   `duplicate:true`.
