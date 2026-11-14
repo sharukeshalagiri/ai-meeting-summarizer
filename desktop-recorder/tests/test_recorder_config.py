@@ -1,4 +1,4 @@
-﻿"""Chunking (seq + offsets from the sample clock) and settings."""
+"""Chunking (seq + offsets from the sample clock) and settings."""
 
 from __future__ import annotations
 

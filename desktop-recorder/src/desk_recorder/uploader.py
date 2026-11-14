@@ -53,13 +53,16 @@ class UploaderStatus:
 class Uploader:
     def __init__(self, queue: ChunkQueue, client: Client,
                  clock: Callable[[], float] = time.time,
-                 on_event: Callable[[str, str], None] | None = None) -> None:
+                 on_event: Callable[[str, str], None] | None = None,
+                 on_session: Callable[[str, str], None] | None = None) -> None:
         self.queue = queue
         self.client = client
         self.clock = clock
-        #: on_event(kind, message): "session" (meetingId known), "failed",
-        #: "auth", "ended". The tray turns these into notifications.
+        #: on_event(kind, message): "failed", "auth", "ended". The tray
+        #: turns these into notifications.
         self.on_event = on_event or (lambda kind, msg: None)
+        #: on_session(local_id, meeting_id) once the backend created it.
+        self.on_session = on_session or (lambda local_id, meeting_id: None)
         self.auth_blocked = False
         self.last_error = ""
         self._wake = threading.Event()
@@ -104,7 +107,7 @@ class Uploader:
             s.meeting_id = str(res.data.get("meetingId") or "") or None
             s.attempts, s.next_attempt_at = 0, 0.0
             self.queue.save_session(s)
-            self.on_event("session", s.meeting_id or "")
+            self.on_session(s.local_id, s.meeting_id or "")
             return True
         if res is not None and res.status == 401:
             self._auth_failed()
