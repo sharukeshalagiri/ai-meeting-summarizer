@@ -1,0 +1,7 @@
+# Pure-Python + numpy dependencies shared by the app and the tests.
+# No audio-device or GUI packages here, so CI (Linux, no sound card) can
+# install them.
+numpy>=1.26
+soundfile>=0.12.1
+requests>=2.31
+psutil>=5.9

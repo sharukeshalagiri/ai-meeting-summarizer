@@ -1,0 +1,10 @@
+[project]
+name = "desk-recorder"
+version = "0.1.0"
+description = "Desktop recorder for the meeting companion: stereo mic + system audio, chunked upload over the capture contract."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

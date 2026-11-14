@@ -1,0 +1,19 @@
+# Local virtualenv, caches and PyInstaller output for the desktop recorder.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+# Never commit audio or recordings: tests generate tones in code.
+*.wav
+*.ogg
+*.opus
+*.webm
+*.flac
+*.mp3
+*.m4a
+queue/
+recordings/

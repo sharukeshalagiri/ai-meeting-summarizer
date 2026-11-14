@@ -1,0 +1,6 @@
+# Full app: core + tray + the platform's capture backend.
+-r requirements-core.txt
+pystray>=0.19.5
+Pillow>=10.0
+PyAudioWPatch>=0.2.12.6; sys_platform == "win32"
+sounddevice>=0.4.6; sys_platform == "darwin"
