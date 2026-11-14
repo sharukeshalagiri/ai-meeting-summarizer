@@ -272,3 +272,32 @@ Full log: [docs/decisions/w1-sum.md](decisions/w1-sum.md).
   evidence. Gemini 503s made each fixture take 5–9 minutes, which is
   why summarizing moved out of the HTTP request (see the wiring entry
   below).
+
+## Summaries run in the background, in-process, until real jobs exist (Pair 1 wiring)
+
+**Constraint:** with Gemini retrying 503s, the v2 pipeline took 5–9
+minutes per meeting, longer than Node's default 5-minute
+`requestTimeout`.
+
+- `POST /summarize` returns 202, and live `/end` and `/upload` return
+  immediately. `meeting.service.startSummary` claims the meeting
+  synchronously, so two requests cannot start two runs. It sets
+  `processingStage` SUMMARIZING and runs the summary in the same
+  process. The outcome is written to the Meeting row as DONE or FAILED,
+  with `processingProgress` and a user-safe `processingError`.
+  `MeetingDetails` polls every 5 s and gives up after about 20 minutes,
+  then offers a retry.
+- **Fallback:** if the v2 pipeline throws, the legacy single-prompt
+  `generateSummary` writes the summary instead, and
+  `Summary.data.pipeline` records `"v2"` or `"legacy"`. No schema change
+  was needed.
+- **Cost, accepted for now:** a backend restart loses a run in
+  progress. Pair 4 (w3-jobs) replaces this with pg-boss.
+  `/resummarize` is still synchronous, and these paths resolve dates in
+  UTC.
+- **The rest of the wiring:** segments store `channel` and `words`.
+  `setNoiseLabels` writes CLEAN's labels keyed by `(meetingId, idx)`.
+  `Meeting.mode` is written by `PATCH /mode`. Live chunks pass the
+  channel layout, the hints, the roster and the previous chunk's
+  trailing words (by `seq - 1`, so out-of-order arrival still works) to
+  the transcription provider.
