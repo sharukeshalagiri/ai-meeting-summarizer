@@ -26,7 +26,11 @@ export const uploadMeetingAudio = asyncHandler(
       requireFile(req).path
     );
 
-    return sendSuccess(res, result, "Meeting processed successfully");
+    return sendSuccess(
+      res,
+      result,
+      "Meeting transcribed; the summary is being generated"
+    );
   }
 );
 

@@ -20,7 +20,10 @@ import { toSpeakerTranscript } from "../types/segment";
 import { toRollingJsonValue } from "../types/summary";
 import { diarizeSegments } from "./diarization.service";
 import * as meetingService from "./meeting.service";
-import { transcribeAudioDetailed } from "./speech.service";
+import {
+  transcribeAudioDetailed,
+  type TranscribeOptions,
+} from "./speech.service";
 import { generateRollingSummary } from "./summary.service";
 
 const log = logger.child({ module: "live.service" });
@@ -88,6 +91,75 @@ const getActiveSession = async (sessionId: string) => {
 
   return session;
 };
+
+/**
+ * Words kept per channel from the previous chunk's tail. The ASR edge
+ * de-dup (docs/decisions/w1-asr.md, D1) removes a repeated run of at
+ * most 6 words, so more would only grow the request.
+ */
+export const PREVIOUS_WORDS_PER_CHANNEL = 6;
+
+type PreviousWords = NonNullable<TranscribeOptions["previousWords"]>;
+
+/**
+ * The trailing words of the given segments, per channel, oldest first,
+ * each tagged with its segment's channel. Segments stored before word
+ * timings existed (words null) contribute nothing.
+ */
+export const tailWords = (
+  segments: { channel?: string | null; words?: unknown }[],
+  perChannel = PREVIOUS_WORDS_PER_CHANNEL
+): PreviousWords => {
+  const byChannel = new Map<string, PreviousWords>();
+
+  for (const segment of segments) {
+    if (!Array.isArray(segment.words)) continue;
+
+    const key = segment.channel ?? "";
+    const list = byChannel.get(key) ?? [];
+
+    for (const raw of segment.words as unknown[]) {
+      const word = raw as Record<string, unknown>;
+      if (
+        typeof word?.w !== "string" ||
+        typeof word.startMs !== "number" ||
+        typeof word.endMs !== "number"
+      ) {
+        continue;
+      }
+
+      list.push({
+        w: word.w,
+        startMs: word.startMs,
+        endMs: word.endMs,
+        ...(typeof word.p === "number" ? { p: word.p } : {}),
+        channel: segment.channel ?? null,
+      });
+    }
+
+    byChannel.set(key, list);
+  }
+
+  return [...byChannel.values()]
+    .flatMap((list) => list.slice(-perChannel))
+    .sort((a, b) => a.startMs - b.startMs);
+};
+
+/**
+ * Session context every chunk transcription gets: the layout, the
+ * recorder's hints and roster (vocabulary bias), and the previous
+ * chunk's tail words for edge de-dup.
+ */
+const transcribeOptionsFor = (
+  session: { hints?: string[] | null; roster?: string[] | null },
+  channelLayout: ChannelLayout,
+  previousWords: PreviousWords
+): TranscribeOptions => ({
+  channelLayout,
+  hints: session.hints ?? [],
+  roster: session.roster ?? [],
+  previousWords,
+});
 
 /**
  * Generates a rolling summary if enough new audio has accumulated.
@@ -161,9 +233,17 @@ export const ingestChunk = async (input: {
   const offsetMs = session.elapsedMs;
 
   try {
+    // Legacy chunks arrive in order, so the previous chunk's tail is
+    // the meeting's most recent segments.
+    const recent = await segmentRepo.findRecentByMeetingId(
+      session.meetingId,
+      PREVIOUS_WORDS_PER_CHANNEL
+    );
+
     const result = await transcribeAudioDetailed(
       input.filePath,
-      offsetMs
+      offsetMs,
+      transcribeOptionsFor(session, "mono", tailWords(recent))
     );
 
     // Prefer the transcript's own span; fall back to what the client
@@ -291,9 +371,22 @@ export const ingestContractChunk = async (input: {
   }
 
   try {
+    // The previous chunk is seq - 1 by idx range, not "the latest
+    // segments": contract chunks may arrive out of order. If it has not
+    // arrived yet there is simply nothing to de-dup against.
+    const previous =
+      input.seq > 0
+        ? await segmentRepo.findByIdxRange(
+            session.meetingId,
+            segmentIdxFor(input.seq - 1, 0),
+            segmentIdxFor(input.seq, 0)
+          )
+        : [];
+
     const result = await transcribeAudioDetailed(
       input.filePath,
-      input.startOffsetMs
+      input.startOffsetMs,
+      transcribeOptionsFor(session, input.channelLayout, tailWords(previous))
     );
 
     let diarized = result.segments.length
@@ -401,7 +494,8 @@ export const getSessionState = async (meetingId: string) => {
 };
 
 /**
- * Ends a capture and produces the final meeting report.
+ * Ends a capture and starts the final meeting report (in the background;
+ * the response does not wait for it).
  *
  * The accumulated segments become the meeting's transcript, which then
  * flows through the same summarization path as an uploaded recording,
@@ -465,15 +559,15 @@ export const endSession = async (sessionId: string) => {
   });
 
   // Reuses the upload pipeline's summarization, so the final report is
-  // generated exactly one way.
-  const summary = await meetingService.summarizeMeeting(
-    session.meetingId
-  );
+  // generated exactly one way. It runs in the background (it can take
+  // minutes); the meeting page polls GET /meetings/:id for the result.
+  await meetingService.startSummary(session.meetingId);
 
   return {
     meetingId: session.meetingId,
     alreadyEnded: false,
-    summary,
+    summary: null,
+    summarizing: true,
   };
 };
 
