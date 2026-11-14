@@ -1,0 +1,119 @@
+/* Summary v2 (track w1-sum). Builds on the tokens and .chip/.badge
+   classes in index.css; only what those do not cover lives here. */
+
+.sum-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+
+.sum-item-text {
+  flex: 1 1 240px;
+}
+
+.sum-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.evidence-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.evidence-chip:hover,
+.evidence-chip:focus-visible {
+  border-color: var(--accent);
+}
+
+.evidence-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.review-badge {
+  color: var(--warn);
+  border-color: currentColor;
+}
+
+.overdue-badge {
+  color: var(--danger);
+  border-color: currentColor;
+  font-weight: 600;
+}
+
+.mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.mode-bar select {
+  min-height: 32px;
+}
+
+.sum-details {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.sum-details > summary {
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  list-style-position: inside;
+}
+
+.sum-details[open] > summary {
+  margin-bottom: 14px;
+}
+
+.sum-subhead {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text-h);
+  margin: 14px 0 8px;
+}
+
+.review-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.review-actions button {
+  min-height: 28px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+}
+
+.review-form {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.review-form input,
+.review-form select {
+  min-height: 32px;
+  width: 100%;
+}

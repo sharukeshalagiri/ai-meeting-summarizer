@@ -333,3 +333,311 @@ export const toRollingJsonValue = (
   })),
   openQuestions: data.openQuestions,
 });
+
+/* =========================================================
+   Schema version 2: evidence-backed, mode-aware summaries
+   ========================================================= */
+
+/**
+ * Version stored in Summary.data.schemaVersion. Rows without the field
+ * are version 1 (the shape above) and still render: readers branch on
+ * `isSummaryV2` and fall back to `parseStructuredSummary`.
+ */
+export const SUMMARY_SCHEMA_VERSION = 2;
+
+/** Summary flavours. AUTO is a setting, never an effective mode. */
+export const SUMMARY_MODES = [
+  "GENERAL",
+  "LECTURE",
+  "INTERVIEW",
+  "PROJECT",
+  "ONE_ON_ONE",
+] as const;
+
+export type SummaryMode = (typeof SUMMARY_MODES)[number];
+
+/** What Meeting.mode may hold. */
+export const MODE_SETTINGS = [...SUMMARY_MODES, "AUTO"] as const;
+
+export type ModeSetting = (typeof MODE_SETTINGS)[number];
+
+export const isSummaryMode = (value: unknown): value is SummaryMode =>
+  typeof value === "string" &&
+  (SUMMARY_MODES as readonly string[]).includes(value);
+
+export const isModeSetting = (value: unknown): value is ModeSetting =>
+  typeof value === "string" &&
+  (MODE_SETTINGS as readonly string[]).includes(value);
+
+/** Accepts "lecture", "one-on-one", "ONE_ON_ONE"...; null if unknown. */
+export const normalizeModeSetting = (value: unknown): ModeSetting | null => {
+  if (typeof value !== "string") return null;
+
+  const upper = value.trim().toUpperCase().replace(/[\s-]+/g, "_");
+
+  return isModeSetting(upper) ? upper : null;
+};
+
+/** TranscriptSegment.noiseLabel values written by the CLEAN pass. */
+export const NOISE_LABELS = [
+  "substantive",
+  "small_talk",
+  "logistics",
+  "filler",
+  "off_topic",
+] as const;
+
+export type NoiseLabel = (typeof NOISE_LABELS)[number];
+
+export const isNoiseLabel = (value: unknown): value is NoiseLabel =>
+  typeof value === "string" &&
+  (NOISE_LABELS as readonly string[]).includes(value);
+
+/** Below this confidence an item is shown as "needs review". */
+export const REVIEW_CONFIDENCE_THRESHOLD = 0.6;
+
+/** Length caps applied in code after VERIFY, whatever the model did. */
+export const SUMMARY_CAPS = {
+  tldrSentences: 3,
+  keyPoints: 7,
+  listItems: 12,
+  itemChars: 400,
+} as const;
+
+/**
+ * One supporting segment. `idx` is TranscriptSegment.idx (never an
+ * array position); speaker and startMs are copied from the segment row
+ * by code, not trusted from the model, so the UI can show a chip
+ * without loading the transcript.
+ */
+export interface Evidence {
+  idx: number;
+  speaker: string;
+  startMs: number;
+}
+
+/**
+ * Fields every summary item carries. `E` is the evidence type: plain
+ * idx numbers as the model returns them, `Evidence` once validated.
+ */
+export interface Sourced<E = Evidence> {
+  evidence: E[];
+  /** 0..1, set by VERIFY. */
+  confidence: number;
+  /** confidence < REVIEW_CONFIDENCE_THRESHOLD. */
+  needsReview: boolean;
+}
+
+export interface SummaryItem<E = Evidence> extends Sourced<E> {
+  text: string;
+}
+
+export interface DecisionItem<E = Evidence> extends Sourced<E> {
+  text: string;
+  /** Who made or announced the decision, when stated. */
+  decidedBy: string | null;
+}
+
+export interface ActionItemV2<E = Evidence> extends Sourced<E> {
+  task: string;
+  owner: string | null;
+  /** Who handed the task out, when it is not the owner. */
+  assignedBy: string | null;
+  /** Deadline exactly as spoken ("by Friday"). */
+  dueSpoken: string | null;
+  /** dueSpoken resolved by lib/dates ("YYYY-MM-DD"), or null. */
+  dueDate: string | null;
+  priority: Priority;
+}
+
+export interface DateItem<E = Evidence> extends Sourced<E> {
+  /** The date as spoken. */
+  spoken: string;
+  /** Resolved by lib/dates, or null. */
+  date: string | null;
+  description: string;
+}
+
+export interface SpeakerPoint<E = Evidence> extends Sourced<E> {
+  speaker: string;
+  text: string;
+}
+
+export interface GlossaryEntry<E = Evidence> extends Sourced<E> {
+  term: string;
+  definition: string;
+}
+
+/* ---------- per-mode sections ---------- */
+
+export interface ExamQuestion<E = Evidence> extends Sourced<E> {
+  question: string;
+  /** Why it is expected: the lecturer's words, or the emphasis. */
+  reason: string;
+}
+
+export interface Formula<E = Evidence> extends Sourced<E> {
+  expression: string;
+  meaning: string;
+}
+
+export interface Assignment<E = Evidence> extends Sourced<E> {
+  task: string;
+  dueSpoken: string | null;
+  dueDate: string | null;
+}
+
+export interface LectureSection<E = Evidence> {
+  outline: SummaryItem<E>[];
+  definitions: GlossaryEntry<E>[];
+  formulas: Formula<E>[];
+  examQuestions: {
+    /** The lecturer said it will be on the exam. */
+    flaggedByLecturer: ExamQuestion<E>[];
+    /** Inferred from emphasis; each has a reason. */
+    likely: ExamQuestion<E>[];
+  };
+  assignments: Assignment<E>[];
+  studyChecklist: SummaryItem<E>[];
+}
+
+export interface InterviewQA<E = Evidence> extends Sourced<E> {
+  question: string;
+  answerSummary: string;
+}
+
+export interface InterviewSection<E = Evidence> {
+  qa: InterviewQA<E>[];
+  followUps: SummaryItem<E>[];
+  strengths: SummaryItem<E>[];
+  concerns: SummaryItem<E>[];
+  nextSteps: SummaryItem<E>[];
+  /** Questions the recording user answered weakly. */
+  struggledWith: SummaryItem<E>[];
+}
+
+export interface PersonStatus<E = Evidence> {
+  name: string;
+  done: SummaryItem<E>[];
+  next: SummaryItem<E>[];
+  blockers: SummaryItem<E>[];
+}
+
+export interface ProjectSection<E = Evidence> {
+  people: PersonStatus<E>[];
+  risks: SummaryItem<E>[];
+}
+
+export interface Commitment<E = Evidence> extends Sourced<E> {
+  who: string;
+  text: string;
+}
+
+export interface OneOnOneSection<E = Evidence> {
+  feedback: SpeakerPoint<E>[];
+  commitments: Commitment<E>[];
+  nextTopics: SummaryItem<E>[];
+}
+
+export interface ModeSections<E = Evidence> {
+  lecture?: LectureSection<E>;
+  interview?: InterviewSection<E>;
+  project?: ProjectSection<E>;
+  oneOnOne?: OneOnOneSection<E>;
+}
+
+/** The part of a v2 summary the model produces (pre- and post-verify). */
+export interface SummaryBody<E = Evidence> {
+  tldr: string;
+  keyPoints: SummaryItem<E>[];
+  decisions: DecisionItem<E>[];
+  actionItems: ActionItemV2<E>[];
+  dates: DateItem<E>[];
+  openQuestions: SummaryItem<E>[];
+  whoSaidWhat: SpeakerPoint<E>[];
+  glossary: GlossaryEntry<E>[];
+  nextSessionPrep: SummaryItem<E>[];
+  keywords: string[];
+  sentiment: MeetingSentiment;
+  sections: ModeSections<E>;
+}
+
+export interface DetectedMode {
+  mode: SummaryMode;
+  confidence: number;
+  reason: string;
+}
+
+/** Stored in Summary.data for schemaVersion 2. */
+export interface SummaryV2 extends SummaryBody<Evidence> {
+  schemaVersion: typeof SUMMARY_SCHEMA_VERSION;
+  /** The mode the summary was written for. */
+  mode: SummaryMode;
+  /** Meeting.mode (or the user's override) when it ran; AUTO or a mode. */
+  modeSetting: ModeSetting;
+  /** AUTO's guess, so the UI can show it and offer a change. */
+  detectedMode: DetectedMode | null;
+  /** Prompt ids and versions that produced this summary. */
+  prompts: Record<string, string>;
+  /** Pipeline bookkeeping, for debugging and evaluation. */
+  stats: {
+    segments: number;
+    substantiveSegments: number;
+    chunks: number;
+    droppedItems: number;
+    timezone: string;
+    meetingStart: string;
+  };
+}
+
+export const isSummaryV2 = (value: unknown): value is SummaryV2 =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as Record<string, unknown>).schemaVersion === SUMMARY_SCHEMA_VERSION;
+
+/**
+ * Prisma JSON input from a v2 summary. The object is plain JSON by
+ * construction (strings, numbers, booleans, nulls, arrays, objects), so
+ * a round trip only drops `undefined` optional sections, which is what
+ * we want stored.
+ */
+export const toJsonValueV2 = (summary: SummaryV2): Prisma.InputJsonObject =>
+  JSON.parse(JSON.stringify(summary)) as Prisma.InputJsonObject;
+
+const texts = (items: { text: string }[]) => items.map((item) => item.text);
+
+/**
+ * Projects a v2 summary onto the version 1 shape, so code that reads
+ * StructuredSummary (analytics, older clients) keeps working on new
+ * rows without knowing about evidence or modes.
+ */
+export const toLegacyView = <E>(summary: SummaryBody<E>): StructuredSummary => {
+  const project = summary.sections.project;
+
+  return {
+    executiveSummary: summary.tldr,
+    keyDecisions: texts(summary.decisions),
+    actionItems: summary.actionItems.map((item) => ({
+      task: item.task,
+      owner: item.owner,
+      dueDate: item.dueSpoken,
+      priority: item.priority,
+    })),
+    importantDates: summary.dates.map((entry) => ({
+      date: entry.spoken,
+      description: entry.description,
+    })),
+    followUps: texts(summary.nextSessionPrep),
+    risks: project ? texts(project.risks) : [],
+    blockers: project
+      ? project.people.flatMap((person) => texts(person.blockers))
+      : [],
+    openQuestions: texts(summary.openQuestions),
+    discussionTopics: summary.keyPoints.map((point) => ({
+      topic: point.text.split(/[.:;]/)[0].slice(0, 60),
+      summary: point.text,
+    })),
+    keywords: summary.keywords,
+    sentiment: summary.sentiment,
+  };
+};

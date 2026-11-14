@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import type { ActionItem } from "../types/summary";
 
@@ -13,7 +14,7 @@ export const findByMeetingId = (meetingId: string) =>
  * Every action item across meetings, newest meeting first.
  *
  * Includes the parent meeting so the task board can link back without
- * a second round trip per row.
+ * a second round trip per row. The service re-sorts by due date.
  */
 export const findAll = (status?: string) =>
   prisma.actionItem.findMany({
@@ -38,35 +39,77 @@ export const updateStatus = (
   });
 
 /**
+ * An action item to store. The fields beyond the v1 four are filled by
+ * the v2 summary pipeline; v1 callers leave them out.
+ */
+export type ActionItemInput = ActionItem & {
+  dueSpoken?: string | null;
+  assignedBy?: string | null;
+  confidence?: number | null;
+  /** [{ idx, speaker, startMs }] with TranscriptSegment.idx. */
+  evidence?: Prisma.InputJsonValue | null;
+  needsReview?: boolean;
+};
+
+export interface ReplaceOptions {
+  /**
+   * Rows a human accepted or edited. They survive re-summarizing, and a
+   * regenerated item with the same task text is skipped so it does not
+   * reappear as a duplicate.
+   */
+  keepIds?: string[];
+  /** Task texts a human rejected or replaced; never re-created. */
+  suppressTasks?: string[];
+}
+
+export const normalizeTask = (task: string) =>
+  task.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
  * Replaces a meeting's action items with the ones a fresh summary
  * produced.
  *
  * Re-summarizing regenerates the list, so the old rows are dropped in
  * the same transaction to avoid duplicating tasks. Completion state
  * for a task the model re-emits is preserved by matching on the task
- * text, which is the only stable identifier available.
+ * text, which is the only stable identifier available. Rows listed in
+ * `keepIds` (human-reviewed) are left untouched.
  */
 export const replaceForMeeting = async (
   meetingId: string,
-  items: ActionItem[]
+  items: ActionItemInput[],
+  options: ReplaceOptions = {}
 ): Promise<number> => {
+  const keepIds = options.keepIds ?? [];
+
   const previous = await prisma.actionItem.findMany({
     where: { meetingId },
-    select: { task: true, status: true, completedAt: true },
+    select: { id: true, task: true, status: true, completedAt: true },
   });
 
   const previousByTask = new Map(
-    previous.map((item) => [item.task.trim().toLowerCase(), item])
+    previous.map((item) => [normalizeTask(item.task), item])
+  );
+
+  const blocked = new Set([
+    ...previous
+      .filter((item) => keepIds.includes(item.id))
+      .map((item) => normalizeTask(item.task)),
+    ...(options.suppressTasks ?? []).map(normalizeTask),
+  ]);
+
+  const fresh = items.filter(
+    (item) => !blocked.has(normalizeTask(item.task))
   );
 
   const [, created] = await prisma.$transaction([
-    prisma.actionItem.deleteMany({ where: { meetingId } }),
+    prisma.actionItem.deleteMany({
+      where: { meetingId, id: { notIn: keepIds } },
+    }),
 
     prisma.actionItem.createMany({
-      data: items.map((item) => {
-        const carried = previousByTask.get(
-          item.task.trim().toLowerCase()
-        );
+      data: fresh.map((item) => {
+        const carried = previousByTask.get(normalizeTask(item.task));
 
         return {
           meetingId,
@@ -74,6 +117,11 @@ export const replaceForMeeting = async (
           owner: item.owner,
           dueDate: item.dueDate,
           priority: item.priority,
+          dueSpoken: item.dueSpoken ?? null,
+          assignedBy: item.assignedBy ?? null,
+          confidence: item.confidence ?? null,
+          evidence: item.evidence ?? Prisma.DbNull,
+          needsReview: item.needsReview ?? false,
           status: carried?.status ?? "PENDING",
           completedAt: carried?.completedAt ?? null,
         };
@@ -83,6 +131,25 @@ export const replaceForMeeting = async (
 
   return created.count;
 };
+
+/** Applies a human review (accept or edit) to one row. */
+export const updateReviewed = (
+  id: string,
+  data: {
+    task?: string;
+    owner?: string | null;
+    dueSpoken?: string | null;
+    dueDate?: string | null;
+    priority?: string;
+  }
+) =>
+  prisma.actionItem.update({
+    where: { id },
+    data: { ...data, needsReview: false },
+  });
+
+export const deleteById = (id: string) =>
+  prisma.actionItem.delete({ where: { id } });
 
 /** Counts by status across every meeting, for the analytics tiles. */
 export const countByStatus = () =>
