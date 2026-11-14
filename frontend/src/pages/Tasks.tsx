@@ -5,7 +5,17 @@ import ErrorState from "../components/ErrorState";
 import { Skeleton } from "../components/Skeleton";
 import { getErrorMessage, patchData } from "../api/api";
 import { useFetch } from "../hooks/useFetch";
+import {
+  formatDue,
+  isOverdue,
+  sortByDue,
+} from "../components/summary/summaryData";
+import "../components/summary/summary.css";
 import type { ActionItemRecord } from "../types/meeting";
+import type { ActionItemRow } from "../types/w1-sum";
+
+/** v2 rows carry dueSpoken / needsReview; v1 rows simply lack them. */
+type TaskRecord = ActionItemRecord & Partial<ActionItemRow>;
 
 const FILTERS = [
   { value: "", label: "All" },
@@ -29,13 +39,13 @@ function Tasks() {
   const [filter, setFilter] = useState("");
 
   const { data, loading, error, refetch, setData } = useFetch<
-    ActionItemRecord[]
+    TaskRecord[]
   >(`/action-items${filter ? `?status=${filter}` : ""}`);
 
   const [saving, setSaving] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const toggle = async (item: ActionItemRecord) => {
+  const toggle = async (item: TaskRecord) => {
     const next =
       item.status === "COMPLETED" ? "PENDING" : "COMPLETED";
 
@@ -53,8 +63,10 @@ function Tasks() {
         setData(
           filter && filter !== next
             ? data.filter((row) => row.id !== item.id)
-            : data.map((row) =>
-                row.id === item.id ? { ...row, status: next } : row
+            : sortByDue(
+                data.map((row) =>
+                  row.id === item.id ? { ...row, status: next } : row
+                )
               )
         );
       }
@@ -123,8 +135,10 @@ function Tasks() {
             />
           ) : (
             <ul className="task-list">
-              {data.map((item) => {
+              {sortByDue(data).map((item) => {
                 const done = item.status === "COMPLETED";
+                const overdue = !done && isOverdue(item.dueDate);
+                const due = item.dueSpoken ?? item.dueDate;
 
                 return (
                   <li
@@ -152,9 +166,28 @@ function Tasks() {
                           <span className="chip">{item.owner}</span>
                         )}
 
-                        {item.dueDate && (
-                          <span className="chip">
-                            Due: {item.dueDate}
+                        {due && (
+                          <span
+                            className="chip"
+                            title={item.dueDate ?? "No calendar date"}
+                          >
+                            Due: {due}
+                            {item.dueSpoken && item.dueDate
+                              ? ` (${formatDue(item.dueDate)})`
+                              : ""}
+                          </span>
+                        )}
+
+                        {overdue && (
+                          <span className="badge overdue-badge">Overdue</span>
+                        )}
+
+                        {item.needsReview && (
+                          <span
+                            className="badge review-badge"
+                            title="Low confidence: confirm it in the meeting's summary"
+                          >
+                            Needs review
                           </span>
                         )}
 

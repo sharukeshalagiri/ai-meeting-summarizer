@@ -13,6 +13,7 @@ import liveRoutes from "./live.routes";
 import meetingRoutes from "./meeting.routes";
 import transcriptRoutes from "./transcript.routes";
 import userRoutes from "./user.routes";
+import w1SumRoutes from "./w1-sum.routes";
 
 /**
  * Single place where the API surface is assembled, so the full set of
@@ -33,5 +34,8 @@ router.patch("/action-items/:id", updateActionItemStatus);
 router.get("/search", searchSegments);
 router.post("/chat", askQuestion);
 router.get("/chat/:id", getConversation);
+
+// w1-sum: mode, re-summarize and action item review under /meetings.
+router.use("/meetings", w1SumRoutes);
 
 export default router;

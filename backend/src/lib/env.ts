@@ -101,6 +101,12 @@ export const env = {
 
   geminiApiKey: required("GEMINI_API_KEY"),
   geminiModel: optional("GEMINI_MODEL", "gemini-flash-latest"),
+  /**
+   * Cheap model for the summary pipeline's high-volume passes (CLEAN
+   * labels every segment; CLASSIFY reads the opening minutes). Quality
+   * matters less there than cost and latency.
+   */
+  geminiCleanModel: optional("GEMINI_CLEAN_MODEL", "gemini-flash-lite-latest"),
   embeddingModel: optional("EMBEDDING_MODEL", "gemini-embedding-2"),
   /**
    * Truncated embedding width. 768 keeps storage and the similarity
