@@ -31,7 +31,10 @@ function MeetingCard({ meeting }: Props) {
           </Link>
         </h2>
 
-        <StatusBadge status={meeting.status} />
+        <StatusBadge
+          status={meeting.status}
+          stage={meeting.processingStage}
+        />
       </div>
 
       <p className="muted tiny meta-row">

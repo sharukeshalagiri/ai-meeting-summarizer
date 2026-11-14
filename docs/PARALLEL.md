@@ -139,3 +139,33 @@ may not be able to run git in that worktree.
    name to the track, like `<track>/impl`.
 4. The lead lists the old worktree and its branch for cleanup (gate d).
    Neither is deleted without the engineer's OK.
+
+## Unattended mode
+
+For a run the engineer will not watch (e.g. overnight), with a
+**pre-approved list of PRs** that may be merged. The lead session only;
+subagents never do this.
+
+1. **Back up first.** Copy `.claude/settings.json` byte for byte into
+   the session's scratchpad and record its SHA-256
+   (`sha256sum`, or `Get-FileHash -Algorithm SHA256` on Windows).
+2. **Relax only what the run needs.** Temporarily move the `ask` rules
+   for `git push` and `gh pr merge` to `allow`. Every `deny` rule stays
+   (no force-push, no push to `main`). Personal overrides for the run go
+   in `.claude/settings.local.json`.
+3. **Crash safety.** A session that starts and finds
+   `.claude/settings.json` modified (`git diff` not empty) restores it
+   from the backup (or `main`) before doing anything else, and says so
+   in the first line of its report.
+4. **Before every `gh pr merge`,** print the PR number and its branch
+   and check both against the pre-approved list. Anything not on the
+   list is not merged.
+5. **Everything else is queued as a decision** for the engineer, not
+   done: gates (c), (d), (e) and (f), merge conflicts that touch logic,
+   any plan that goes beyond its brief, and anything that failed twice.
+6. **At the end, restore byte-exact:** copy the backup back, confirm
+   `git diff .claude/settings.json` is empty and the SHA-256 matches the
+   recorded one, and remove `.claude/settings.local.json` (the run's
+   overrides). Put both confirmations (empty diff + SHA match, local
+   file removed) at the top of the end report, followed by the queued
+   decisions.

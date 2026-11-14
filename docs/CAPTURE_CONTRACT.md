@@ -30,16 +30,22 @@ token from their own settings.
 
 ## Audio
 
-- Container: anything ffmpeg decodes (webm/opus from MediaRecorder,
-  wav, ogg, m4a). A chunk is usually 10–30 s and must be under
+- **Accepted format: Opus, 48 kHz, stereo**, in one of two containers:
+  - `audio/webm` (the extension and web page, from MediaRecorder);
+  - `audio/ogg` (the desktop recorder).
+
+  `ai-service/tests/test_capture_formats.py` checks that both decode
+  as 2 channels at 48 kHz through PyAV, the decoder faster-whisper
+  uses. Other containers ffmpeg decodes (wav, m4a) still work but are
+  not tested. A chunk is usually 10–30 s and must be under
   `MAX_CHUNK_MB`.
 - `channelLayout`:
   - `"stereo-mic-left"`: **left channel = the user's microphone, right
     channel = everyone else** (tab or system audio). This is the target
     format for every recorder.
   - `"mono"`: a single mixed channel (the legacy web page and fallbacks).
-- For now the backend transcribes the file as-is (Whisper downmixes).
-  Channel-aware transcription is w1-asr's job.
+- The ai-service transcribes a `stereo-mic-left` chunk per channel and a
+  `mono` chunk as one stream.
 
 ## 1. Start a session
 
@@ -92,7 +98,8 @@ are there for the legacy web page.
 | `seq` already transcribed | **200**, `duplicate: true`, the original response replayed; nothing re-processed | treat as success |
 | `seq` is **still processing** (an earlier upload of it is in flight) | **409** | **Not a failure.** Retry the same chunk later with backoff (e.g. 2 s, 4 s, 8 s … capped at 30 s). Never drop it. |
 | `seq` failed earlier | processed again (200 on success) | retry was correct |
-| session already ended | **410** (a duplicate of a transcribed seq still gets 200 `duplicate: true`) | stop uploading |
+| session ended **less than 24 h ago** (by `/end` or the idle reaper) | **200**, processed as a late chunk (see [4. End](#4-end)) | keep draining the queue |
+| session ended **more than 24 h ago** | **410** (a transcribed seq still gets 200 `duplicate: true`, at any age) | stop uploading; drop the chunk |
 | missing or invalid field | **400** | fix the request; don't retry unchanged |
 | upstream failure (Whisper, Gemini) | **502** | retry with backoff |
 | bad token | **401** | stop; fix configuration |
@@ -148,6 +155,32 @@ attribution (w2-spk); they don't create speakers. **200** →
 Finalizes the transcript and runs the summary. Calling it twice is safe:
 the second call returns `alreadyEnded: true`. Sessions that stop sending
 audio for `LIVE_SESSION_IDLE_MINUTES` are ended automatically.
+
+A session that ends with no speech at all is not a failure: the meeting
+gets `processingStage: "NO_SPEECH"` (status `COMPLETED`), and the app
+shows "No speech detected".
+
+**Late chunks.** Recorders drain their queue before `/end`, but a
+network drop, a sleep or the idle reaper can end a session while chunks
+are still queued. For **24 hours after it ended**, a session accepts
+them:
+
+- Checks run in this order: a `seq` already transcribed replays with
+  `duplicate: true` (at any age); after 24 h the answer is **410**;
+  otherwise the chunk goes through the normal claim, so 409 and
+  failed-retry work as above, and `idx = seq * 1000 + i`.
+- The session stays `ENDED`, and no rolling summary runs.
+- A late chunk that adds speech (at least one segment) schedules a
+  re-summary **2 minutes later**. Each further late chunk restarts that
+  timer, so a backlog costs one summary. The transcript and duration
+  are then rebuilt from all segments and the summary runs again. A
+  `NO_SPEECH` meeting moves to `TRANSCRIBED` first. A chunk that was
+  already processing when `/end` arrived and finishes after it does the
+  same.
+- Silent chunks, duplicates and 409s never schedule a re-summary.
+- The timer is in memory: if the backend restarts during those 2
+  minutes, the summary stays stale until another late chunk arrives
+  (durable jobs are w3-jobs' work).
 
 ## Recorder checklist
 

@@ -161,7 +161,9 @@ function MeetingDetails() {
     (meeting.status === "PROCESSING" || meeting.status === "LIVE") &&
     !summaryStuck;
   const hasFailed = meeting.status === "FAILED" || summaryStuck;
-  const incomplete = hasFailed || !meeting.summary;
+  // A live capture with no speech has nothing to summarize or retry.
+  const noSpeech = meeting.processingStage === "NO_SPEECH";
+  const incomplete = !noSpeech && (hasFailed || !meeting.summary);
 
   const duration = formatDuration(meeting.durationSec);
 
@@ -182,7 +184,10 @@ function MeetingDetails() {
           <h1>{meeting.title}</h1>
 
           <p className="muted tiny meta-row">
-            <StatusBadge status={meeting.status} />
+            <StatusBadge
+              status={meeting.status}
+              stage={meeting.processingStage}
+            />
 
             {meeting.source === "LIVE" && (
               <span className="chip">Live capture</span>
@@ -250,6 +255,16 @@ function MeetingDetails() {
           >
             Refresh
           </button>
+        </div>
+      )}
+
+      {noSpeech && !retrying && (
+        <div className="card" role="status">
+          <p>
+            No speech detected. The capture ended without any transcribed
+            speech (often the wrong tab or a muted source). If audio
+            arrives late, the summary is generated automatically.
+          </p>
         </div>
       )}
 

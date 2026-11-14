@@ -1,6 +1,14 @@
 interface Props {
   status: string;
+  /** Meeting.processingStage; NO_SPEECH overrides the status label. */
+  stage?: string | null;
 }
+
+/**
+ * A live capture that ended with no speech is COMPLETED (nothing to
+ * summarize), not FAILED, but "Completed" would suggest a summary.
+ */
+const NO_SPEECH = { label: "No speech detected", tone: "tone-neutral" };
 
 /**
  * Status label and tone in one place, so the dashboard and detail page
@@ -15,8 +23,11 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   CREATED: { label: "Created", tone: "" },
 };
 
-function StatusBadge({ status }: Props) {
-  const entry = STATUS[status] ?? { label: status, tone: "" };
+function StatusBadge({ status, stage }: Props) {
+  const entry =
+    stage === "NO_SPEECH"
+      ? NO_SPEECH
+      : (STATUS[status] ?? { label: status, tone: "" });
 
   return (
     <span className={`badge ${entry.tone}`}>
