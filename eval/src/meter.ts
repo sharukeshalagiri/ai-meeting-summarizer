@@ -100,7 +100,7 @@ export class GeminiMeter {
     const original = models.generateContent.bind(models);
     const send = impl ?? original;
 
-    models.generateContent = async (params: Record<string, unknown>) => {
+    models.generateContent = async (params: Record<string, unknown> = {}) => {
       const model = String(params.model ?? "?");
       const config = (params.config ?? {}) as Record<string, unknown>;
       const request = hash(JSON.stringify([model, params.contents, config.systemInstruction]));

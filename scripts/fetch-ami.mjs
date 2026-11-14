@@ -59,10 +59,13 @@ export const parseWordsXml = (xml, speaker) => {
   for (const m of xml.matchAll(/<w\b([^>]*)>([^<]*)<\/w>/g)) {
     const tag = m[1];
     if (attr(tag, "punc") === "true") continue;
-    const start = Number(attr(tag, "starttime"));
-    const end = Number(attr(tag, "endtime"));
+    const startAttr = attr(tag, "starttime");
+    const endAttr = attr(tag, "endtime");
+    const start = Number(startAttr);
+    const end = Number(endAttr);
     const text = decode(m[2]).trim();
-    if (!text || !Number.isFinite(start) || !Number.isFinite(end)) continue;
+    // Number(null) is 0, so a missing time must be caught before converting.
+    if (!text || startAttr === null || endAttr === null || !Number.isFinite(start) || !Number.isFinite(end)) continue;
     words.push({ speaker, text, startMs: Math.round(start * 1000), endMs: Math.round(end * 1000) });
   }
   return words;
