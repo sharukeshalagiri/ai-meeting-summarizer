@@ -1,5 +1,7 @@
-# Test dependencies only. Tests stub out `whisper`, so these are enough
-# to run the suite without installing torch or openai-whisper.
+# Test dependencies only. Tests install a fake `faster_whisper` module,
+# so these are enough to run the suite without CTranslate2 or a model.
 fastapi
 httpx
 pytest
+numpy
+python-multipart

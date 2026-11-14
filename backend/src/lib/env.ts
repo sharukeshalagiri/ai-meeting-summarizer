@@ -66,6 +66,31 @@ const deviceToken = (): string | null => {
   return null;
 };
 
+/**
+ * Which TranscriptionProvider speech.service uses (w1-asr):
+ * "local" = the ai-service (faster-whisper, free, default);
+ * "deepgram" = Deepgram's hosted API, which is PAID per audio minute and
+ * needs DEEPGRAM_API_KEY. Validated here so a typo fails at boot.
+ */
+const transcriptionProvider = (): "local" | "deepgram" => {
+  const value = optional("TRANSCRIPTION_PROVIDER", "local").trim().toLowerCase();
+
+  if (value !== "local" && value !== "deepgram") {
+    throw new Error(
+      `TRANSCRIPTION_PROVIDER must be "local" or "deepgram", got "${value}".`
+    );
+  }
+
+  if (value === "deepgram" && !process.env.DEEPGRAM_API_KEY?.trim()) {
+    throw new Error(
+      "Missing required environment variable: DEEPGRAM_API_KEY. " +
+        "It is required when TRANSCRIPTION_PROVIDER=deepgram."
+    );
+  }
+
+  return value;
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   isProduction,
@@ -121,6 +146,13 @@ export const env = {
 
   /** Null means device auth is off (development only). */
   deviceToken: deviceToken(),
+
+  /** See transcriptionProvider() above. */
+  transcriptionProvider: transcriptionProvider(),
+  /** Only read when TRANSCRIPTION_PROVIDER=deepgram. */
+  deepgramApiKey: process.env.DEEPGRAM_API_KEY?.trim() || null,
+  /** nova-2 takes `keywords`; nova-3 models take `keyterm` instead. */
+  deepgramModel: optional("DEEPGRAM_MODEL", "nova-2"),
 } as const;
 
 export type Env = typeof env;
