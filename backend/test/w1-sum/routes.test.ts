@@ -29,6 +29,9 @@ vi.mock("../../src/lib/gemini", async (importOriginal) => {
 });
 
 vi.mock("../../src/repositories/meeting.repository", () => ({
+  updateMode: async (_id: string, mode: string) => {
+    if (store.meeting) store.meeting.mode = mode;
+  },
   findById: async (id: string) =>
     store.meeting && store.meeting.id === id
       ? { ...store.meeting, summary: store.summary, actionItems: store.items }
@@ -37,6 +40,13 @@ vi.mock("../../src/repositories/meeting.repository", () => ({
 
 vi.mock("../../src/repositories/segment.repository", () => ({
   findByMeetingId: async () => store.segments,
+  setNoiseLabels: async (_meetingId: string, labels: { idx: number; label: string }[]) => {
+    for (const { idx, label } of labels) {
+      const row = store.segments.find((segment) => segment.idx === idx);
+      if (row) row.noiseLabel = label;
+    }
+    return labels.length;
+  },
 }));
 
 vi.mock("../../src/repositories/correction.repository", () => ({

@@ -16,10 +16,12 @@ export const transcribeMeeting = asyncHandler(
 
 export const summarizeMeeting = asyncHandler(
   async (req: Request, res: Response) => {
-    const summary = await meetingService.summarizeMeeting(
+    // 202: the summary runs in the background; poll GET /meetings/:id
+    // until processingStage leaves SUMMARIZING.
+    const state = await meetingService.startSummary(
       requireParam(req.params.id, "meeting id")
     );
 
-    return sendSuccess(res, summary, "Summary generated");
+    return sendSuccess(res, state, "Summary started", 202);
   }
 );

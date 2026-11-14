@@ -69,6 +69,38 @@ export const updateDuration = (id: string, durationSec: number) =>
     data: { durationSec },
   });
 
+/** Meeting.mode, written when the user picks a mode (PATCH /mode). */
+export const updateMode = (id: string, mode: string) =>
+  prisma.meeting.update({
+    where: { id },
+    data: { mode },
+  });
+
+/**
+ * Background-processing state (processingStage / Progress / Error).
+ * Only the fields passed are written; `error: null` clears it.
+ */
+export const updateProcessing = (
+  id: string,
+  data: {
+    stage?: string | null;
+    progress?: number | null;
+    error?: string | null;
+    status?: string;
+  }
+) =>
+  prisma.meeting.update({
+    where: { id },
+    data: {
+      ...(data.stage !== undefined ? { processingStage: data.stage } : {}),
+      ...(data.progress !== undefined
+        ? { processingProgress: data.progress }
+        : {}),
+      ...(data.error !== undefined ? { processingError: data.error } : {}),
+      ...(data.status !== undefined ? { status: data.status } : {}),
+    },
+  });
+
 export const markStarted = (id: string) =>
   prisma.meeting.update({
     where: { id },
