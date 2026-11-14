@@ -1,0 +1,14 @@
+{
+  "name": "e2e",
+  "private": true,
+  "description": "Browser end-to-end tests (Playwright, one chromium). The API is mocked in the browser: no backend, database, Whisper or Gemini.",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.3"
+  }
+}
