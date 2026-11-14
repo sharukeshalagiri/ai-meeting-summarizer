@@ -138,6 +138,10 @@ describe("w1-sum routes", () => {
     expect(data.actionItems[0].evidence.map((e) => e.idx)).toEqual([3000, 3001]);
     expect(store.summary?.content).toContain("# TL;DR");
     expect(store.replaceCalls[0].items[0]).toMatchObject({ task: "Build the endpoint", dueSpoken: "by Friday", assignedBy: "Priya", needsReview: false });
+    // Wiring: the producing pipeline is recorded, and CLEAN labels are
+    // stored through segment.repository setNoiseLabels by default.
+    expect((store.summary?.data as { pipeline?: string }).pipeline).toBe("v2");
+    expect(store.segments.map((s) => s.noiseLabel)).not.toContain(null);
   });
 
   it("records a mode change as a correction and uses it", async () => {
@@ -145,6 +149,7 @@ describe("w1-sum routes", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ modeSetting: "LECTURE" });
+    expect(store.meeting?.mode).toBe("LECTURE");
     expect(store.corrections).toEqual([
       { meetingId: "m1", kind: "MEETING_MODE", targetId: null, before: { mode: "AUTO" }, after: { mode: "LECTURE" } },
     ]);
