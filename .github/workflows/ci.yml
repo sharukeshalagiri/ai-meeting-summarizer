@@ -47,6 +47,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      # vitest (src/lib/capture, including the extension-copy check).
+      # The job name is unchanged so any required-check settings still match.
+      - run: npm test
       - run: npm run build
 
   ai-service:
@@ -62,9 +65,30 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: ai-service/requirements-dev.txt
+      # ffmpeg (with libopus) generates the capture-format fixtures in
+      # tests/test_capture_formats.py, which skips without it.
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # Test-only deps: the suite stubs `whisper`, so no torch.
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest
+
+  desktop-recorder:
+    name: desktop-recorder (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: desktop-recorder/requirements-dev.txt
+      # Creates desktop-recorder/.venv from requirements-dev.txt (no audio
+      # devices or tray packages), then runs pytest.
+      - run: node desktop-recorder/run-tests.mjs
 
   scripts:
     name: scripts (ownership rules unit tests)

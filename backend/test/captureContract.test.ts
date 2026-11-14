@@ -1,6 +1,10 @@
 import request from "supertest";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app";
+import {
+  cancelScheduledResummaries,
+  reapStaleSessions,
+} from "../src/services/live.service";
 import * as fakes from "./helpers/liveFakes";
 
 /**
@@ -20,6 +24,9 @@ vi.mock("../src/repositories/segment.repository", async () =>
 );
 vi.mock("../src/repositories/meeting.repository", async () =>
   (await import("./helpers/liveFakes")).meetingRepo
+);
+vi.mock("../src/repositories/transcript.repository", async () =>
+  (await import("./helpers/liveFakes")).transcriptRepo
 );
 vi.mock("../src/services/meeting.service", async () =>
   (await import("./helpers/liveFakes")).meetingService
@@ -214,17 +221,184 @@ describe("POST /api/live/sessions/:id/chunks (contract)", () => {
     expect(negativeSeq.status).toBe(400);
   });
 
-  it("returns 410 once the session has ended, but still replays duplicates", async () => {
+  it("returns 410 once the session ended over 24 h ago, but still replays duplicates", async () => {
     const { sessionId } = await startSession();
 
     await sendChunk(sessionId, 0, "before end");
     await fakes.liveSessionRepo.end(sessionId);
+    fakes.store.sessions.get(sessionId)!.endedAt = new Date(
+      Date.now() - 25 * 60 * 60 * 1000
+    );
 
-    expect((await sendChunk(sessionId, 1, "late")).status).toBe(410);
+    expect((await sendChunk(sessionId, 1, "too late")).status).toBe(410);
 
     const replay = await sendChunk(sessionId, 0, "before end");
     expect(replay.status).toBe(200);
     expect(replay.body.data.duplicate).toBe(true);
+  });
+});
+
+describe("late chunks (after the session ended)", () => {
+  const TWO_MIN = 2 * 60 * 1000;
+
+  const end = (sessionId: string) =>
+    request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+
+  beforeEach(() => {
+    cancelScheduledResummaries();
+    // Only the debounce timer is faked; supertest and Express keep
+    // their real timers.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  });
+
+  afterEach(() => {
+    cancelScheduledResummaries();
+    vi.useRealTimers();
+  });
+
+  it("accepts a chunk after /end with the right idx, without reopening", async () => {
+    const { sessionId } = await startSession();
+
+    await sendChunk(sessionId, 0, "before");
+    expect((await end(sessionId)).status).toBe(200);
+
+    const late = await sendChunk(sessionId, 1, "late one | late two");
+
+    expect(late.status).toBe(200);
+    expect(late.body.data.duplicate).toBe(false);
+    expect(late.body.data.rollingSummaryGenerated).toBe(false);
+    expect(late.body.data.segments.map((s: { idx: number }) => s.idx)).toEqual([
+      1000, 1001,
+    ]);
+    expect(fakes.store.sessions.get(sessionId)!.status).toBe("ENDED");
+  });
+
+  it("accepts a chunk after the idle reaper ended the session", async () => {
+    const { sessionId } = await startSession();
+
+    await sendChunk(sessionId, 0, "before");
+    expect(await reapStaleSessions()).toBe(1);
+    expect(fakes.store.sessions.get(sessionId)!.status).toBe("ENDED");
+
+    const late = await sendChunk(sessionId, 2, "after reap");
+    expect(late.status).toBe(200);
+    expect(late.body.data.segments[0].idx).toBe(2000);
+  });
+
+  it("re-summarizes once, 2 minutes after the last of several late chunks", async () => {
+    const { sessionId, meetingId } = await startSession();
+
+    await sendChunk(sessionId, 0, "before");
+    await end(sessionId);
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+
+    expect((await sendChunk(sessionId, 1, "late a")).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(TWO_MIN - 30_000);
+    expect((await sendChunk(sessionId, 2, "late b")).status).toBe(200);
+
+    // 2 min after the first, but only 1.5 min after the second.
+    await vi.advanceTimersByTimeAsync(TWO_MIN - 30_000);
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fakes.store.summariesStarted).toEqual([meetingId, meetingId]);
+    expect(fakes.store.transcripts.get(meetingId)).toBe(
+      "before late a late b"
+    );
+    expect(fakes.store.meetings.get(meetingId)!.durationSec).toBe(60);
+
+    await vi.advanceTimersByTimeAsync(10 * TWO_MIN);
+    expect(fakes.store.summariesStarted).toHaveLength(2);
+  });
+
+  it("does not re-summarize for a duplicate or a silent late chunk", async () => {
+    const { sessionId, meetingId } = await startSession();
+
+    await sendChunk(sessionId, 0, "before");
+    await end(sessionId);
+
+    const duplicate = await sendChunk(sessionId, 0, "before");
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.data.duplicate).toBe(true);
+
+    const silent = await sendChunk(sessionId, 1, " ");
+    expect(silent.status).toBe(200);
+    expect(silent.body.data.segments).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(10 * TWO_MIN);
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+  });
+
+  it("waits another 2 minutes while a summary is still running", async () => {
+    const { sessionId, meetingId } = await startSession();
+
+    await sendChunk(sessionId, 0, "before");
+    await end(sessionId);
+    fakes.store.runningSummaries.add(meetingId);
+
+    await sendChunk(sessionId, 1, "late");
+    await vi.advanceTimersByTimeAsync(TWO_MIN);
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+
+    fakes.store.runningSummaries.delete(meetingId);
+    await vi.advanceTimersByTimeAsync(TWO_MIN);
+    expect(fakes.store.summariesStarted).toEqual([meetingId, meetingId]);
+  });
+
+  it("marks a session that ends with no speech NO_SPEECH, not FAILED", async () => {
+    const { sessionId, meetingId } = await startSession();
+
+    await sendChunk(sessionId, 0, " ");
+    expect((await end(sessionId)).status).toBe(200);
+
+    const meeting = fakes.store.meetings.get(meetingId)!;
+    expect(meeting.processingStage).toBe("NO_SPEECH");
+    expect(meeting.status).toBe("COMPLETED");
+    expect(fakes.store.summariesStarted).toEqual([]);
+  });
+
+  it("moves a NO_SPEECH meeting to TRANSCRIBED and re-summarizes on late speech", async () => {
+    const { sessionId, meetingId } = await startSession();
+
+    await end(sessionId);
+    expect(fakes.store.meetings.get(meetingId)!.processingStage).toBe(
+      "NO_SPEECH"
+    );
+
+    expect((await sendChunk(sessionId, 0, "finally audio")).status).toBe(200);
+    await vi.advanceTimersByTimeAsync(TWO_MIN);
+
+    const meeting = fakes.store.meetings.get(meetingId)!;
+    expect(meeting.status).toBe("TRANSCRIBED");
+    expect(meeting.processingStage).toBeNull();
+    expect(fakes.store.transcripts.get(meetingId)).toBe("finally audio");
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+  });
+
+  it("schedules a re-summary for a chunk claimed before /end that finishes after it", async () => {
+    vi.useRealTimers();
+    const { sessionId, meetingId } = await startSession();
+
+    let release!: () => void;
+    fakes.store.gate = new Promise<void>((resolve) => (release = resolve));
+
+    const pending = sendChunk(sessionId, 0, "in flight").then((r) => r);
+    await vi.waitFor(() => expect(fakes.store.transcribeCalls).toBe(1));
+
+    // /end sees no segments yet.
+    expect((await end(sessionId)).status).toBe(200);
+    expect(fakes.store.meetings.get(meetingId)!.processingStage).toBe(
+      "NO_SPEECH"
+    );
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    release();
+    expect((await pending).status).toBe(200);
+    expect(fakes.store.summariesStarted).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(TWO_MIN);
+    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(fakes.store.meetings.get(meetingId)!.status).toBe("TRANSCRIBED");
   });
 });
 
