@@ -1,3 +1,4 @@
+import { env } from "../lib/env";
 import { Queues } from "./definitions";
 import * as pipeline from "./pipeline";
 import type { JobHandler, JobQueue } from "./queue";
@@ -22,7 +23,17 @@ export const registerWorkers = async (
     await queue.work(name, handler as JobHandler<unknown>);
   }
 
+  // w4-acct: audio retention, a recurring job.
+  await queue.work(Queues.AUDIO_RETENTION, async () => {
+    const { sweepAudio } = await import("../services/retention/retention.service");
+    await sweepAudio();
+  });
+
   // Recurring jobs are registered by the server only (schedules: true),
   // never by tests that start the in-process queue on demand.
-  void options;
+  if (options.schedules) {
+    // The in-process queue only understands "*/N * * * *".
+    const cron = queue.driver === "memory" ? "*/60 * * * *" : env.retentionCron;
+    await queue.schedule(Queues.AUDIO_RETENTION, cron);
+  }
 };

@@ -46,25 +46,13 @@ const asNumber = (name: string, fallback: number): number => {
 const isProduction = process.env.NODE_ENV === "production";
 
 /**
- * Shared secret recorders (extension, desktop app, bot) send as
- * `Authorization: Bearer <token>` on /api/live. Optional in development
- * so the web page works without setup; production refuses to boot
- * without it. See middleware/deviceAuth.middleware.ts.
+ * DEPRECATED (w4-acct): the shared recorder secret. Recorders now send a
+ * per-user device token (Devices page), and this value is ignored. Kept
+ * only so an existing .env still loads; it is no longer required in
+ * production.
  */
-const deviceToken = (): string | null => {
-  const value = process.env.DEVICE_TOKEN?.trim();
-
-  if (value) return value;
-
-  if (isProduction) {
-    throw new Error(
-      "Missing required environment variable: DEVICE_TOKEN. " +
-        "It is required when NODE_ENV=production."
-    );
-  }
-
-  return null;
-};
+const deviceToken = (): string | null =>
+  process.env.DEVICE_TOKEN?.trim() || null;
 
 /**
  * Which TranscriptionProvider speech.service uses (w1-asr):
@@ -143,6 +131,39 @@ const diarizationProvider = (): "voice" | "text" | "deepgram" => {
   return value;
 };
 
+/**
+ * Signs the session cookie (w4-acct). Required in production; in
+ * development a fixed placeholder keeps sessions across ts-node-dev
+ * restarts, with a warning at boot (lib/auth/session.ts).
+ */
+const sessionSecret = (): string | null => {
+  const value = process.env.SESSION_SECRET?.trim();
+
+  if (value) {
+    if (isProduction && value.length < 32) {
+      throw new Error("SESSION_SECRET must be at least 32 characters in production.");
+    }
+    return value;
+  }
+
+  if (isProduction) {
+    throw new Error(
+      "Missing required environment variable: SESSION_SECRET. " +
+        "It is required when NODE_ENV=production (openssl rand -hex 32)."
+    );
+  }
+
+  return null;
+};
+
+const asBoolean = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  throw new Error(`Environment variable ${name} must be true or false, got "${raw}".`);
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   isProduction,
@@ -216,6 +237,26 @@ export const env = {
   diarizationProvider: diarizationProvider(),
   /** Label for the user's own (mic channel) segments until renamed. */
   meDisplayName: optional("ME_DISPLAY_NAME", "You").trim().slice(0, 60) || "You",
+
+  /** See sessionSecret() above (w4-acct). Null = development placeholder. */
+  sessionSecret: sessionSecret(),
+  /** Days a login lasts without activity (the cookie is rolling). */
+  sessionMaxAgeDays: asNumber("SESSION_MAX_AGE_DAYS", 30),
+  /**
+   * POST /api/auth/signup. On outside production, off in production,
+   * where `npm --prefix backend run user:password` creates the account.
+   */
+  authAllowSignup: asBoolean("AUTH_ALLOW_SIGNUP", !isProduction),
+  /** SMTP for "email this summary" (w4-acct). Unset host = email export off. */
+  smtpHost: process.env.SMTP_HOST?.trim() || null,
+  smtpPort: asNumber("SMTP_PORT", 587),
+  /** true = TLS from the start (port 465); false = STARTTLS. */
+  smtpSecure: asBoolean("SMTP_SECURE", false),
+  smtpUser: process.env.SMTP_USER?.trim() || null,
+  smtpPassword: process.env.SMTP_PASSWORD || null,
+  smtpFrom: optional("SMTP_FROM", "Meeting Companion <no-reply@localhost>"),
+  /** How often the audio-retention job runs (cron, UTC). Hourly by default. */
+  retentionCron: optional("RETENTION_CRON", "17 * * * *"),
 } as const;
 
 export type Env = typeof env;

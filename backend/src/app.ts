@@ -16,7 +16,17 @@ import { sendSuccess } from "./types/api";
 export const createApp = () => {
   const app = express();
 
-  app.use(cors({ origin: env.corsOrigin }));
+  // w4-acct: credentials so the session cookie crosses from the dev
+  // frontend's port. A credentialed response may not say "*", so "*"
+  // reflects the caller's origin (development; the cookie is
+  // SameSite=Lax, so other sites still cannot use it) and anything else
+  // is a comma-separated allow-list.
+  app.use(
+    cors({
+      origin: env.corsOrigin === "*" ? true : env.corsOrigin.split(",").map((o) => o.trim()),
+      credentials: true,
+    })
+  );
   app.use(express.json({ limit: "1mb" }));
 
   app.use(requestLogger);

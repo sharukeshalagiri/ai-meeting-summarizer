@@ -1,6 +1,10 @@
+import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import {
+  createTranscriptionProvider,
   getTranscriptionProvider,
+  type AsrProvider,
+  type ProviderName,
   type AsrRequest,
   type BoundaryWord,
 } from "../providers/transcription";
@@ -8,6 +12,11 @@ import { parseLocalSegments } from "../providers/transcription/parse";
 import type { ChannelLayout, MeetingMode } from "../types/capture";
 import type { TranscribedSegment } from "../types/providers";
 import type { RawSegment } from "../types/segment";
+import {
+  settingsForAudioPath,
+  settingsForMeeting,
+  type ProcessingSettings,
+} from "./account/context";
 
 const log = logger.child({ module: "speech.service" });
 
@@ -54,7 +63,34 @@ export interface TranscribeOptions {
    * the segment's channel), to drop words repeated across the cut.
    */
   previousWords?: (StoredWord & { channel?: string | null })[];
+  /**
+   * w4-acct: the meeting being transcribed, so the owner's Settings
+   * (transcription provider, glossary) apply. Without it the meeting is
+   * looked up by the recording's path (the upload pipeline).
+   */
+  meetingId?: string;
 }
+
+const byName = new Map<ProviderName, AsrProvider>();
+
+/**
+ * The owner's chosen provider, or the server's (TRANSCRIPTION_PROVIDER).
+ * Deepgram is only used when the server has a key; otherwise the
+ * server's provider runs, so a stale setting never fails a recording.
+ */
+export const providerFor = (choice: string | null | undefined): AsrProvider => {
+  const name: ProviderName | null =
+    choice === "local" ? "local" : choice === "deepgram" && env.deepgramApiKey ? "deepgram" : null;
+
+  if (!name || name === env.transcriptionProvider) return getTranscriptionProvider();
+
+  let provider = byName.get(name);
+  if (!provider) {
+    provider = createTranscriptionProvider(name);
+    byName.set(name, provider);
+  }
+  return provider;
+};
 
 /** Provider segment -> storable segment (word shape of SCHEMA_NOTES). */
 export const toStoredSegment = (segment: TranscribedSegment): AsrSegment => ({
@@ -123,14 +159,18 @@ export async function transcribeAudioDetailed(
   offsetMs = 0,
   options: TranscribeOptions = {}
 ): Promise<TranscriptionResult> {
-  const provider = getTranscriptionProvider();
+  const settings: ProcessingSettings | null = options.meetingId
+    ? await settingsForMeeting(options.meetingId)
+    : await settingsForAudioPath(audioPath);
+  const provider = providerFor(settings?.transcriptionProvider);
 
   const request: AsrRequest = {
     filePath: audioPath,
     offsetMs,
     channelLayout: options.channelLayout ?? "mono",
     language: options.language ?? null,
-    hints: combineHints(options.roster, options.hints),
+    // Session hints first, then the user's personal glossary.
+    hints: combineHints(options.roster, [...(options.hints ?? []), ...(settings?.glossary ?? [])]),
     ...(options.mode ? { mode: options.mode } : {}),
     previousWords: toBoundaryWords(options.previousWords),
   };

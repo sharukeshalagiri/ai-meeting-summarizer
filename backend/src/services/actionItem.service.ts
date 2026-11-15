@@ -36,12 +36,13 @@ export const sortByDueDate = <
   });
 };
 
-export const listActionItems = async (status?: string | null) => {
+/** One user's tasks across their meetings (w4-acct: scoped by owner). */
+export const listActionItems = async (userId: string, status?: string | null) => {
   if (status && !STATUSES.has(status.toUpperCase())) {
     throw BadRequest("status must be PENDING or COMPLETED");
   }
 
-  return sortByDueDate(await actionItemRepo.findAll(status?.toUpperCase()));
+  return sortByDueDate(await actionItemRepo.findAll(userId, status?.toUpperCase()));
 };
 
 export const listByMeeting = (meetingId: string) =>

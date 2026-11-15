@@ -14,7 +14,7 @@ import { logger } from "../lib/logger";
 import * as meetingRepo from "../repositories/meeting.repository";
 import * as segmentRepo from "../repositories/segment.repository";
 import * as transcriptRepo from "../repositories/transcript.repository";
-import * as userRepo from "../repositories/user.repository";
+import { defaultModeFor } from "./account/context";
 import { AppError, BadRequest, NotFound, UpstreamError } from "../types/errors";
 import { MeetingStatus, ProcessingStage } from "../types/meeting";
 
@@ -29,31 +29,31 @@ const log = logger.child({ module: "meeting.service" });
  * /meetings/:id/events streams the progress.
  */
 
+/**
+ * Creates a meeting owned by `userId` (always the signed-in user or the
+ * device token's account; never a fallback). A missing or AUTO mode
+ * takes the owner's default mode from Settings.
+ */
 export const createMeeting = async (input: {
   title: string;
   description: string | null;
-  userId?: string | null;
+  userId: string;
   source?: string;
   platform?: string | null;
   mode?: string;
 }) => {
-  // The MVP is single-user: fall back to the existing account so the
-  // client does not have to hardcode an id.
-  const ownerId = input.userId ?? (await userRepo.findFirst())?.id;
-
-  if (!ownerId) {
-    throw BadRequest(
-      "No user exists yet. Create one via POST /api/users first."
-    );
-  }
+  const mode =
+    input.mode && input.mode !== "AUTO"
+      ? input.mode
+      : (await defaultModeFor(input.userId)) ?? input.mode;
 
   const meeting = await meetingRepo.create({
     title: input.title,
     description: input.description,
-    userId: ownerId,
+    userId: input.userId,
     source: input.source ?? "UPLOAD",
     platform: input.platform ?? null,
-    ...(input.mode ? { mode: input.mode } : {}),
+    ...(mode ? { mode } : {}),
   });
 
   log.info("Meeting created", {
@@ -64,7 +64,8 @@ export const createMeeting = async (input: {
   return meeting;
 };
 
-export const listMeetings = () => meetingRepo.findAll();
+/** The user's meetings, newest first. */
+export const listMeetings = (userId: string) => meetingRepo.findAll(userId);
 
 export const getMeeting = async (meetingId: string) => {
   const meeting = await meetingRepo.findById(meetingId);

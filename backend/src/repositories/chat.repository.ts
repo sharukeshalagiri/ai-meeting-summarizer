@@ -5,6 +5,8 @@ import { prisma } from "../lib/prisma";
 
 export const create = (data: {
   conversationId: string;
+  /** Owner of the thread (w4-acct). */
+  userId: string;
   meetingId: string | null;
   role: string;
   content: string;
@@ -13,6 +15,7 @@ export const create = (data: {
   prisma.chatMessage.create({
     data: {
       conversationId: data.conversationId,
+      userId: data.userId,
       meetingId: data.meetingId,
       role: data.role,
       content: data.content,
@@ -22,9 +25,16 @@ export const create = (data: {
     },
   });
 
-export const findByConversation = (conversationId: string) =>
+/**
+ * A thread's messages, only if they are the user's: rows of other users
+ * (and ownerless rows from before accounts) never come back.
+ */
+export const findByConversation = (conversationId: string, userId: string) =>
   prisma.chatMessage.findMany({
-    where: { conversationId },
+    where: {
+      conversationId,
+      OR: [{ userId }, { userId: null, meeting: { userId } }],
+    },
     orderBy: { createdAt: "asc" },
   });
 

@@ -16,9 +16,9 @@ export const findByMeetingId = (meetingId: string) =>
  * Includes the parent meeting so the task board can link back without
  * a second round trip per row. The service re-sorts by due date.
  */
-export const findAll = (status?: string) =>
+export const findAll = (userId: string, status?: string) =>
   prisma.actionItem.findMany({
-    where: status ? { status } : undefined,
+    where: { meeting: { userId }, ...(status ? { status } : {}) },
     orderBy: { createdAt: "desc" },
     include: {
       meeting: { select: { id: true, title: true, createdAt: true } },
@@ -152,19 +152,21 @@ export const deleteById = (id: string) =>
   prisma.actionItem.delete({ where: { id } });
 
 /** Counts by status across every meeting, for the analytics tiles. */
-export const countByStatus = () =>
+export const countByStatus = (userId: string) =>
   prisma.actionItem.groupBy({
     by: ["status"],
+    where: { meeting: { userId } },
     _count: { _all: true },
   });
 
-export const countAll = () => prisma.actionItem.count();
+export const countAll = (userId: string) =>
+  prisma.actionItem.count({ where: { meeting: { userId } } });
 
 /** Open items grouped by owner, so the dashboard can show a workload. */
-export const countOpenByOwner = () =>
+export const countOpenByOwner = (userId: string) =>
   prisma.actionItem.groupBy({
     by: ["owner"],
-    where: { status: "PENDING", owner: { not: null } },
+    where: { status: "PENDING", owner: { not: null }, meeting: { userId } },
     _count: { _all: true },
     orderBy: { _count: { owner: "desc" } },
     take: 10,

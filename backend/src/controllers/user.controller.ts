@@ -1,23 +1,18 @@
 import { Request, Response } from "express";
+import { currentUserId } from "../middleware/auth.middleware";
 import * as userService from "../services/user.service";
 import { sendSuccess } from "../types/api";
+import { AppError } from "../types/errors";
 import { asyncHandler } from "../utils/asyncHandler";
-import { requireString } from "../utils/validate";
 
-export const createUser = asyncHandler(
-  async (req: Request, res: Response) => {
-    const user = await userService.createUser({
-      name: requireString(req.body?.name, "name", { maxLength: 120 }),
-      email: requireString(req.body?.email, "email", { maxLength: 200 }),
-    });
-
-    return sendSuccess(res, user, "User created", 201);
-  }
-);
+/** Replaced by POST /auth/signup; kept so old clients get a clear answer. */
+export const createUser = asyncHandler(async () => {
+  throw new AppError("Create accounts with POST /api/auth/signup.", 410);
+});
 
 export const getUsers = asyncHandler(
-  async (_req: Request, res: Response) => {
-    const users = await userService.listUsers();
+  async (req: Request, res: Response) => {
+    const users = await userService.listUsers(currentUserId(req));
 
     return sendSuccess(res, users, "Users fetched");
   }

@@ -73,10 +73,17 @@ export const deleteForMeeting = (meetingId: string) =>
 export const search = async (input: {
   embedding: number[];
   limit: number;
+  /** Owner: only this user's meetings are ever searched (w4-acct). */
+  userId: string;
   meetingId?: string | null;
+  /** Restrict to these meetings (a series); null = no restriction. */
+  meetingIds?: string[] | null;
   minScore?: number;
 }): Promise<SearchHit[]> => {
   const { embedding, limit, meetingId, minScore = 0.35 } = input;
+  const meetingIds = input.meetingIds ?? null;
+
+  if (meetingIds && meetingIds.length === 0) return [];
 
   if (embedding.length === 0) return [];
 
@@ -115,14 +122,18 @@ export const search = async (input: {
     FROM "SegmentEmbedding" e
     JOIN "TranscriptSegment" s ON s."id" = e."segmentId"
     JOIN "Meeting" m           ON m."id" = e."meetingId"
-    WHERE ($1::text IS NULL OR e."meetingId" = $1::text)
+    WHERE m."userId" = $4::text
+      AND ($1::text IS NULL OR e."meetingId" = $1::text)
+      AND ($5::text[] IS NULL OR e."meetingId" = ANY($5::text[]))
       AND e."dims" = $2::int
     ORDER BY "score" DESC
     LIMIT $3::int
     `,
     meetingId ?? null,
     embedding.length,
-    limit
+    limit,
+    input.userId,
+    meetingIds
   );
 
   return rows

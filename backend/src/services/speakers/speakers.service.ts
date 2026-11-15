@@ -14,6 +14,7 @@ import {
   type RenameMap,
 } from "./applyNames";
 import { MIC_LABEL, shownName } from "./attribute";
+import { meLabelForMeeting } from "../account/context";
 import { withMeetingLock } from "./lock";
 import { suggestNames, type NameSuggestion } from "./names";
 
@@ -68,6 +69,8 @@ export const listSpeakers = async (meetingId: string): Promise<SpeakerView[]> =>
   ]);
 
   const mic = profiles.find((p) => p.label === MIC_LABEL);
+  // w4-acct: the owner's display name labels their own (mic) segments.
+  const meLabel = await meLabelForMeeting(meetingId);
   const suggestions = new Map(
     suggestNames(
       rows.map((row) => ({
@@ -77,7 +80,7 @@ export const listSpeakers = async (meetingId: string): Promise<SpeakerView[]> =>
         text: row.text,
       })),
       roster,
-      [env.meDisplayName, ...(mic?.displayName ? [mic.displayName] : [])]
+      [meLabel, ...(mic?.displayName ? [mic.displayName] : [])]
     ).map((s) => [s.speakerId, s])
   );
 
@@ -93,7 +96,7 @@ export const listSpeakers = async (meetingId: string): Promise<SpeakerView[]> =>
     key: profile.id,
     speakerId: profile.id,
     label: profile.label,
-    name: shownName(profile),
+    name: shownName(profile, meLabel),
     isMe: profile.label === MIC_LABEL,
     source: profile.source,
     segmentCount: counts.get(profile.id) ?? 0,
@@ -177,7 +180,7 @@ export const renameSpeaker = async (
       if (!profile || profile.meetingId !== meetingId) {
         throw NotFound("Speaker not found");
       }
-      before = shownName(profile);
+      before = shownName(profile, await meLabelForMeeting(meetingId));
       await profileRepo.setDisplayName(profile.id, name, "MANUAL");
     }
 

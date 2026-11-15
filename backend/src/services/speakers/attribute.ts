@@ -6,6 +6,7 @@ import type { ChannelLayout } from "../../types/capture";
 import type { DiarizationProvider } from "../../types/providers";
 import type { DiarizedSegment, RawSegment } from "../../types/segment";
 import { withMeetingLock } from "./lock";
+import { meLabelForMeeting } from "../account/context";
 import {
   CONTINUITY_MS,
   matchClusters,
@@ -84,9 +85,13 @@ export const defaultDeps: SpeakerDeps = {
   fallback: () => new TextDiarizationProvider(),
 };
 
-export const shownName = (profile: Profile): string =>
+/**
+ * `meLabel` (w4-acct): the owner's display name from Settings for an
+ * unnamed mic profile; defaults to ME_DISPLAY_NAME ("You").
+ */
+export const shownName = (profile: Profile, meLabel: string = env.meDisplayName): string =>
   profile.displayName ??
-  (profile.label === MIC_LABEL ? env.meDisplayName : profile.label);
+  (profile.label === MIC_LABEL ? meLabel : profile.label);
 
 const isMic = (profile: Profile) => profile.label === MIC_LABEL;
 
@@ -153,6 +158,7 @@ const attributeUnlocked = async (
 
   const { meetingId } = context;
   const profiles: Profile[] = await deps.profiles.findByMeetingId(meetingId);
+  const meLabel = await meLabelForMeeting(meetingId);
 
   const createProfile = async (data: {
     label?: string;
@@ -222,7 +228,7 @@ const attributeUnlocked = async (
         context: (context.previous ?? [])
           .slice(-CONTEXT_SIZE)
           .map((s) => ({ speaker: s.speaker, text: s.text })),
-        knownLabels: profiles.filter((p) => !isMic(p)).map(shownName),
+        knownLabels: profiles.filter((p) => !isMic(p)).map((p) => shownName(p)),
       },
       deps
     );
@@ -355,7 +361,7 @@ const attributeUnlocked = async (
 
   return segments.flatMap((segment) =>
     segment.channel === "mic"
-      ? [{ ...segment, speaker: shownName(mic!), speakerId: mic!.id }]
+      ? [{ ...segment, speaker: shownName(mic!, meLabel), speakerId: mic!.id }]
       : (remoteParts.get(segment) ?? [])
   );
 };
@@ -479,7 +485,7 @@ export const applyAutoNames = (
         text: row.text,
       })),
       roster,
-      [env.meDisplayName, ...(mic?.displayName ? [mic.displayName] : [])]
+      [await meLabelForMeeting(meetingId), ...(mic?.displayName ? [mic.displayName] : [])]
     );
 
     const applied: { speakerId: string; name: string }[] = [];

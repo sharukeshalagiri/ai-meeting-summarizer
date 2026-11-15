@@ -9,6 +9,11 @@ import { logger } from "../lib/logger";
 import * as chatRepo from "../repositories/chat.repository";
 import * as embeddingRepo from "../repositories/embedding.repository";
 import { embedQuery } from "./embedding.service";
+import {
+  assertConversationAccess,
+  assertMeetingOwner,
+} from "./account/access.service";
+import { meetingIdsFor } from "./series/series.service";
 import { BadRequest } from "../types/errors";
 import {
   CHAT_ANSWER_SCHEMA,
@@ -34,7 +39,10 @@ const DEFAULT_TOP_K = 12;
  */
 export const search = async (input: {
   query: string;
+  userId: string;
   meetingId?: string | null;
+  /** w4-acct: limit to one series' meetings. */
+  seriesId?: string | null;
   limit?: number;
 }) => {
   const query = input.query.trim();
@@ -43,12 +51,13 @@ export const search = async (input: {
     throw BadRequest("Enter something to search for.");
   }
 
+  const scope = await scopeFor(input);
   const embedding = await embedQuery(query);
 
   const hits = await embeddingRepo.search({
     embedding,
     limit: Math.min(input.limit ?? 20, 50),
-    meetingId: input.meetingId ?? null,
+    ...scope,
   });
 
   log.debug("Search complete", {
@@ -60,6 +69,25 @@ export const search = async (input: {
     ...hit,
     timestamp: formatTimestamp(hit.startMs),
   }));
+};
+
+/**
+ * w4-acct: every search is limited to the user's own meetings (the SQL
+ * filters on Meeting.userId), and optionally to one meeting or series.
+ * A meeting or series id of another account is a 404, like a missing one.
+ */
+const scopeFor = async (input: {
+  userId: string;
+  meetingId?: string | null;
+  seriesId?: string | null;
+}) => {
+  if (input.meetingId) await assertMeetingOwner(input.userId, input.meetingId);
+
+  return {
+    userId: input.userId,
+    meetingId: input.meetingId ?? null,
+    meetingIds: input.seriesId ? await meetingIdsFor(input.userId, input.seriesId) : null,
+  };
 };
 
 const SYSTEM_INSTRUCTION = `
@@ -142,7 +170,9 @@ const resolveCitations = (
 export const ask = async (input: {
   question: string;
   conversationId: string;
+  userId: string;
   meetingId?: string | null;
+  seriesId?: string | null;
 }): Promise<ChatAnswer> => {
   const question = input.question.trim();
 
@@ -150,8 +180,13 @@ export const ask = async (input: {
     throw BadRequest("Ask a question to get started.");
   }
 
+  // Someone else's thread id must not let a user read or extend it.
+  await assertConversationAccess(input.userId, input.conversationId, { mustExist: false });
+  const scope = await scopeFor(input);
+
   await chatRepo.create({
     conversationId: input.conversationId,
+    userId: input.userId,
     meetingId: input.meetingId ?? null,
     role: "user",
     content: question,
@@ -163,7 +198,7 @@ export const ask = async (input: {
   const hits = await embeddingRepo.search({
     embedding,
     limit: DEFAULT_TOP_K,
-    meetingId: input.meetingId ?? null,
+    ...scope,
   });
 
   if (hits.length === 0) {
@@ -174,6 +209,7 @@ export const ask = async (input: {
 
     await chatRepo.create({
       conversationId: input.conversationId,
+      userId: input.userId,
       meetingId: input.meetingId ?? null,
       role: "assistant",
       content: answer,
@@ -211,6 +247,7 @@ export const ask = async (input: {
 
     await chatRepo.create({
       conversationId: input.conversationId,
+      userId: input.userId,
       meetingId: input.meetingId ?? null,
       role: "assistant",
       content: answer,
@@ -234,5 +271,7 @@ export const ask = async (input: {
   }
 };
 
-export const getConversation = (conversationId: string) =>
-  chatRepo.findByConversation(conversationId);
+export const getConversation = async (userId: string, conversationId: string) => {
+  await assertConversationAccess(userId, conversationId, { mustExist: true });
+  return chatRepo.findByConversation(conversationId, userId);
+};
