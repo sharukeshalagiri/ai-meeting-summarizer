@@ -31,7 +31,7 @@ const argValue = (name: string): string | undefined => {
 
 const main = async () => {
   const withAudio = !process.argv.includes("--no-audio");
-  const engine = withAudio ? await pickEngine(argValue("--tts") ?? process.env.DEMO_TTS ?? "auto") : null;
+  const engine = withAudio ? await pickEngine(argValue("--tts") ?? env.demoTts) : null;
   const storage = getStorage();
   const now = new Date();
 

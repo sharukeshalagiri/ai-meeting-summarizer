@@ -274,6 +274,8 @@ export const env = {
   maxAudioMinutes: asNumber("MAX_AUDIO_MINUTES", isProduction ? 180 : 0),
   /** w5-demo: measures an upload's duration for MAX_AUDIO_MINUTES. */
   ffprobePath: optional("FFPROBE_PATH", "ffprobe"),
+  /** w5-demo, demo:seed only: text-to-speech engine, auto | sapi | espeak | tones. */
+  demoTts: optional("DEMO_TTS", "auto"),
 } as const;
 
 export type Env = typeof env;
