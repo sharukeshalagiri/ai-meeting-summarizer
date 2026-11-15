@@ -151,6 +151,10 @@ w3-jobs slot=8
   backend/src/repositories/meeting.repository.ts
   backend/src/services/w1-sum.service.ts
   backend/src/controllers/meeting.controller.ts
+  backend/src/server.ts
+  backend/src/types/meeting.ts
+  frontend/src/pages/NewMeeting.tsx
+  frontend/src/components/SummaryView.tsx
 
 w3-infra slot=9
   **/Dockerfile*
