@@ -12,9 +12,11 @@
  * - Any other `speaker`, `owner` or `assignedBy` string is replaced
  *   when it equals (case-insensitively, whole string) an old name.
  *
- * Wired by the integrator (two one-line calls, see the PR):
- * `withSpeakerNames(meeting)` on GET /meetings/:id and
- * `withOwnerNames(items)` on GET /action-items.
+ * Wired (speakers.service `withSpeakerNames` / `withOwnerNames`) on
+ * GET /meetings/:id, /summary, /action-items, /summary-review, the
+ * resummarize and action-item review responses (meeting.controller,
+ * w1-sum.controller), GET /action-items (actionItem.controller), and
+ * exports (export.service loadExport).
  */
 
 export type RenameMap = ReadonlyMap<string, string>;

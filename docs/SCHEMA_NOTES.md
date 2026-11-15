@@ -13,10 +13,19 @@ the engineer's approval.
 `TranscriptSegment.idx` is the **only** way to refer to a segment from
 anywhere else: summary evidence, chat citations, corrections, the UI's
 `id="seg-<idx>"` and `jumpToSegment(idx)`. **Never use an array
-position.** For uploads idx is dense (0..n-1), but for live capture under
-the capture contract it is **sparse**: `seq * 1000 + i` (chunk 3's
-segments are 3000, 3001, …). So "the 5th segment" and `idx = 5` are
-different things.
+position.** For uploads idx is dense (0..n-1). For live capture under
+the capture contract it is **sparse during the call**: `seq * 1000 + i`
+(chunk 3's segments are 3000, 3001, …). So "the 5th segment" and
+`idx = 5` are different things.
+
+After the call, the **final pass** (w3-jobs: `/end` assembles the
+recording and runs it through the upload pipeline) replaces the live
+draft with segments numbered **densely** (0..n-1). Speakers carry over
+from the draft. Kept action items have their evidence re-pointed to the
+new idx **by time** (`jobs/liveFinal.ts` `remapEvidence`), and the
+summary is regenerated from the new segments. If the final pass cannot
+run, the draft and its sparse idx stay. Never keep an idx from a live
+meeting across its final pass. Read it again from the stored rows.
 
 ## Meeting
 

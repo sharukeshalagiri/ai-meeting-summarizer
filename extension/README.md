@@ -45,7 +45,11 @@ After changing `frontend/src/lib/capture/`, run
 3. Click the toolbar icon, then open **Settings** and enter:
    - **Backend URL:** e.g. `http://localhost:5000/api` (a track worktree
      uses its own port, e.g. `http://localhost:5110/api`).
-   - **Device token:** only if the backend sets `DEVICE_TOKEN`.
+   - **Device token:** required. Sign in to the web app, open
+     **Devices**, click **Create token** (kind: Chrome extension) and paste the
+     token here. It is shown once; revoking it on the Devices page stops
+     this recorder. The backend's old shared `DEVICE_TOKEN` is no longer
+     accepted.
    - **Web app URL:** e.g. `http://localhost:5173`. The meeting link opens
      here.
    Click **Save** and accept Chrome's prompt to allow the backend's host.

@@ -193,7 +193,11 @@ export const env = {
   corsOrigin: optional("CORS_ORIGIN", "*"),
 
   uploadDir: optional("UPLOAD_DIR", "uploads/meetings"),
-  /** Live capture chunks, deleted once transcribed. */
+  /**
+   * Live capture chunks. Kept after transcription: the final pass
+   * assembles the recording from them, and retention deletes them with
+   * the meeting's recording.
+   */
   liveChunkDir: optional("LIVE_CHUNK_DIR", "uploads/live"),
   maxUploadBytes: asNumber("MAX_UPLOAD_MB", 500) * 1024 * 1024,
   /** One chunk of captured audio; far smaller than a full recording. */
