@@ -1,5 +1,6 @@
 /**
  * npm run eval [-- --cases a,b|smoke|synthetic|ami] [--cap 30] [--no-judge] [--diarize] [--retry-wait 60]
+ *                 [--rpm 5] [--request-timeout 120]
  * npm run eval:check  [-- --report eval/reports/<file>.json]
  * npm run eval:accept -- --note "why" [--report ...]
  * npm run eval:import-corrections [-- --case own-<slug>] [--write]
@@ -17,8 +18,6 @@ import type { CaseResult, RunResult } from "./run";
 import { scoreSummary } from "./score";
 import type { AnswerKey, LoadedCase } from "./types";
 
-const REPORTS = path.join(EVAL_DIR, "reports");
-const RUNS = path.join(EVAL_DIR, "runs");
 const BASELINE = path.join(EVAL_DIR, "baseline.json");
 
 const args = process.argv.slice(2);
@@ -33,6 +32,11 @@ const readJson = <T>(file: string): T => JSON.parse(fs.readFileSync(file, "utf8"
 
 /** Paths from the command line are relative to where npm was run, not eval/. */
 const userPath = (p: string) => path.resolve(process.env.INIT_CWD ?? process.cwd(), p);
+
+/** --out moves reports and raw runs elsewhere (tests); the baseline always stays in eval/. */
+const OUT = value("out") ? userPath(value("out")!) : EVAL_DIR;
+const REPORTS = path.join(OUT, "reports");
+const RUNS = path.join(OUT, "runs");
 const writeJson = (file: string, data: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
@@ -41,7 +45,8 @@ const writeJson = (file: string, data: unknown) => {
 /** backend/.env, if present; its values are never printed. Shell values win. */
 const loadBackendEnv = () => {
   const file = path.join(ROOT, "backend/.env");
-  if (fs.existsSync(file)) {
+  // EVAL_NO_ENV_FILE=1: use the shell environment only (the CLI test).
+  if (process.env.EVAL_NO_ENV_FILE !== "1" && fs.existsSync(file)) {
     try {
       process.loadEnvFile(file);
     } catch {
@@ -148,6 +153,9 @@ async function runCommand() {
       judge: !flag("no-judge"),
       diarize: flag("diarize"),
       retryWaitMs: Number(value("retry-wait") ?? 60) * 1000,
+      // Free tier: 5 requests per minute per model. 0 turns pacing off.
+      rpm: Number(value("rpm") ?? 5),
+      requestTimeoutMs: Number(value("request-timeout") ?? 120) * 1000,
       log: (line) => console.log(line),
     });
     run.cases.push(...missing);

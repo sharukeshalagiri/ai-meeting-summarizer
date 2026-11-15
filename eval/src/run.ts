@@ -116,8 +116,14 @@ export interface RunOptions {
   diarize: boolean;
   /** Seconds to wait before re-running a case that hit an outage. */
   retryWaitMs: number;
-  /** Replaces the real Gemini request (tests). */
-  send?: (params: Record<string, unknown>) => Promise<unknown>;
+  /** Replaces the network under the metered fetch (tests): Gemini never sees a request. */
+  fetch?: typeof fetch;
+  /** Gemini requests per minute per model (free tier: 5); 0 = no pacing. */
+  rpm?: number;
+  /** A Gemini request that has not answered by then is aborted and counts as a network failure. */
+  requestTimeoutMs?: number;
+  /** Where the meter is installed (tests only; default globalThis, which the SDK calls). */
+  meterTarget?: { fetch: typeof fetch };
   /** Replaces transcription (tests). */
   transcribe?: (audioPath: string) => Promise<HypSegment[]>;
   log?: (line: string) => void;
@@ -179,7 +185,13 @@ export const classifyAttempt = (calls: CaseCalls, error: unknown): { status: Cas
   if (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Credentials and configuration are infrastructure too.
-    if (/credentials|GEMINI_API_KEY|transcription service|ai-service|ECONNREFUSED/i.test(message)) {
+    // So are the user-facing forms of an overload, a rate limit or a
+    // network failure, in case a request failed outside the meter.
+    if (
+      /credentials|GEMINI_API_KEY|transcription service|ai-service|ECONNREFUSED|temporarily overloaded|rate limited|quota|fetch failed|timed out|network/i.test(
+        message
+      )
+    ) {
       return { status: "INFRA_ERROR", reason: message };
     }
     return { status: "PIPELINE_ERROR", reason: message };
@@ -187,13 +199,25 @@ export const classifyAttempt = (calls: CaseCalls, error: unknown): { status: Cas
   return { status: "OK" };
 };
 
+/** The meter saw no Gemini request for a case that produced a summary. */
+export class MeterBlindError extends Error {
+  constructor(caseId: string) {
+    super(
+      `${caseId}: the pipeline produced a summary but the meter counted no Gemini request. ` +
+        "The call cap and outage detection are not working; the run was aborted."
+    );
+    this.name = "MeterBlindError";
+  }
+}
+
 export async function runEval(options: RunOptions): Promise<RunResult> {
   const log = options.log ?? (() => {});
   const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const meter = new GeminiMeter(options.cap);
-  const uninstall = meter.install(
-    getClient().models as unknown as { generateContent: (p: Record<string, unknown>) => Promise<unknown> },
-    options.send
+  const uninstall = meter.installFetch(
+    options.meterTarget ?? globalThis,
+    { rpm: options.rpm ?? 0, requestTimeoutMs: options.requestTimeoutMs ?? 0, sleep },
+    options.fetch
   );
   const startedAt = new Date().toISOString();
   const results: CaseResult[] = [];
@@ -323,6 +347,12 @@ async function runTranscriptCase(
 
     const attemptCalls = meter.forCase(tag);
     calls = addCalls(calls, attemptCalls);
+    // A summary needs at least one request. Seeing none means the meter is
+    // blind (the first real run had this bug), so neither the cap nor the
+    // outage detection can be trusted: stop before spending more.
+    if (!error && attemptCalls.calls === 0 && attemptCalls.refused === 0) {
+      throw new MeterBlindError(entry.id);
+    }
     outcome = classifyAttempt(attemptCalls, error);
     if (outcome.status !== "INFRA_ERROR") break;
   }
