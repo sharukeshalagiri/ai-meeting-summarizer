@@ -301,3 +301,179 @@ minutes per meeting, longer than Node's default 5-minute
   channel layout, the hints, the roster and the previous chunk's
   trailing words (by `seq - 1`, so out-of-order arrival still works) to
   the transcription provider.
+
+## Background jobs: pg-boss in the Postgres we already run (w3-jobs)
+
+Full log: [docs/decisions/w3-jobs.md](decisions/w3-jobs.md). This
+replaces the in-process summary of the Pair 1 wiring entry above.
+
+- **pg-boss over BullMQ or a hand-rolled table.** It needs only
+  Postgres: no Redis, no extra container, no paid service. Jobs survive a
+  restart, retry with backoff, and expire when a worker dies (a 30 s
+  heartbeat lets a killed process's job be retried within about a
+  minute). `singletonKey` gives one run per meeting without our own
+  locking. BullMQ needs Redis. Our own `jobs` table would mean rewriting
+  leasing, expiry and retries, plus a Prisma migration.
+- **The `pgboss` schema is outside Prisma.** pg-boss creates and
+  migrates it on first start (`PGBOSS_SCHEMA`). Prisma never manages it,
+  so the track needed no migration; the engineer confirmed this is
+  outside gate (c). Prisma-only URL parameters (`schema`,
+  `connection_limit`, ...) are stripped from `DATABASE_URL` before
+  pg-boss sees it.
+- **A small `JobQueue` interface** (`jobs/queue.ts`). Services call
+  `enqueue`, `isPipelineBusy` and `waitForJob` from `jobs/index.ts`, and
+  nothing outside `src/jobs` imports pg-boss. pg-boss 10+ is ESM-only;
+  Node 22.12+ can `require()` it from our CommonJS build, and it is
+  loaded lazily.
+- **An in-memory driver** (`JOBS_DRIVER=memory`, and always under
+  `NODE_ENV=test`) has the same semantics in-process: stately singleton,
+  retries with backoff, expiry. Tests never need a database, and a quick
+  local run works without durable jobs. Its jobs are lost on restart, so
+  it is not for production.
+- **The worker runs in the API process.** Scaling out means running the
+  same build with only `startJobs()`; pg-boss coordinates several
+  workers by itself.
+
+## The pipeline is one queue per step (w3-jobs)
+
+`transcribe -> diarize -> clean -> summarize -> index`
+(`jobs/pipeline.ts`), so each step has its own retry limit and expiry
+(`jobs/definitions.ts`).
+
+- **Stage at enqueue.** A step's `processingStage` is written when its
+  job is *queued*, so it means "waiting for or running this step". The
+  page never shows a gap between steps, and a crashed worker leaves an
+  accurate stage behind. Indexing runs after DONE and has no stage: a
+  meeting is complete without it, and its failure is only logged.
+- **Idempotent steps.** Every write replaces rather than appends:
+  segments are replaced, the summary is upserted, action items are
+  replaced (v2 keeps human-reviewed ones). A step that runs twice, on a
+  retry or after a crash between commit and completion, gives the same
+  result.
+- **One run per meeting:** `singletonKey = meetingId` on every job, plus
+  a busy guard. `startProcessing`, `startSummary` and `retryProcessing`
+  queue nothing while any pipeline job for the meeting is waiting or
+  running (`isPipelineBusy`), and return the current state (still 202).
+  The singleton is per queue, so on its own it would still let a
+  summarize job be queued behind a running transcribe.
+- **Whisper output is a storage artifact** (`artifacts/<id>/asr.json`),
+  so a diarize failure does not mean transcribing again, and the
+  existing transcript is untouched until diarize commits. If the
+  artifact is missing, diarize queues transcribe again.
+- **Failures are sorted into kinds** (`jobs/errors.ts`). Transient ones
+  (`RATE_LIMITED`, `AI_UNAVAILABLE`, `ASR_UNREACHABLE`,
+  `DB_UNAVAILABLE`) are retried with backoff while the meeting shows
+  "Retrying automatically (attempt n of m)". Permanent ones (`AI_AUTH`,
+  `BAD_INPUT`, `INTERNAL`), and transient ones out of attempts, set
+  FAILED with `processingError = "[STAGE/KIND] user-safe message"`.
+  Upstream error text is never stored or shown.
+- **Fallback:** v2 failing in the upload flow still falls back to the
+  legacy summary. A user's re-summarize has no fallback, since they
+  asked for v2 in a chosen mode.
+- **Retry and resume** (`POST /:id/retry`): with segments, resume from
+  CLEAN, so Whisper and diarization are not redone; without them,
+  transcribe again (needs a recording).
+
+## Progress over SSE, with a polling fallback (w3-jobs)
+
+- `GET /meetings/:id/events` sends the current progress row, then every
+  change, then `event: end` once settled, and closes so the browser does
+  not reconnect in a loop. Writes in this process are pushed at once
+  (`progressBus`); the row is also re-read every 5 s, so writes from
+  another process still arrive. A heartbeat every 25 s and
+  `X-Accel-Buffering: no` keep proxies from closing or buffering it.
+- **SSE over WebSockets:** progress is one-way, SSE is plain HTTP, and
+  the browser reconnects by itself.
+- `useMeetingProgress` falls back to polling `GET /meetings/:id` every
+  5 s when there is no EventSource, the stream answers an error status
+  (503, 404), or three errors come in a row. The 20-minute "stuck"
+  heuristic is gone, since a durable job is not lost on restart.
+- **Open:** EventSource cannot send headers, so the stream has no auth
+  yet. w4-acct is to scope it by cookie or a short-lived query token.
+
+## Synchronous endpoints are kept by waiting on jobs (w3-jobs, Pair 4 wiring)
+
+Existing clients keep working, and the work is still durable.
+
+- `POST /transcribe` queues the pipeline and waits for the transcript
+  (up to `TRANSCRIPTION_TIMEOUT_MINUTES`, then 504).
+- `POST /resummarize` waits up to `RESUMMARIZE_WAIT_MS` (4.5 min, below
+  Node's 5-minute `requestTimeout`). After that it answers 200
+  `{ queued: true, summary: null, actionItems: null, ... }` and the job
+  carries on. The message is the same in both 200 cases, so clients
+  check `data.queued`. `SummaryView` then follows the SSE stream.
+- A re-summarize leaves `status` as it was (the old summary stays until
+  the new one is saved), so its failure shows only as `processingStage`
+  FAILED. Clients detect failure by stage, not status.
+- `POST /upload` no longer returns a transcript (`transcript: null`,
+  `summary: null`, plus `processing`).
+
+## When the queue is down: 503, never a stuck stage (w3-jobs)
+
+- `server.ts` starts the queue after `listen`, so the API comes up even
+  when pg-boss cannot. A failed start is logged at ERROR and retried
+  every 30 s; a half-started pg-boss is stopped.
+- Every route that queues work answers **503** "Background processing is
+  unavailable right now. Try again shortly." (`jobsUnavailable()`). It
+  checks this before writing any stage, so no meeting shows a step that
+  no job will run. Reads keep working.
+- `GET /api/health` is always 200 with `queue: "up" | "down"`, and
+  `GET /api/health/ready` is 503 while it is down, so a deployment can
+  hold traffic without restarting a healthy process. The root
+  `GET /health` stays pure liveness.
+- On shutdown `stopJobs()` stops pg-boss gracefully (20 s) before Prisma
+  disconnects. A job still running after that expires and is picked up
+  by the next process.
+
+## A `Storage` interface, local disk only (w3-jobs)
+
+- `lib/storage` (`STORAGE_DRIVER=local`, root `STORAGE_DIR`) puts keys
+  (relative POSIX paths, checked by `assertKey`) behind `put`, `get`,
+  `exists`, `remove` and `localPath`. Writes go to a temp file and are
+  renamed into place, so a crash never leaves a half-written key that a
+  retried job would trust.
+- `localPath` exists because the ai-service and ffmpeg read files by
+  path. An S3-compatible driver would download to a temp file there.
+- Today only the ASR artifact uses it. Uploads still go through multer
+  to `UPLOAD_DIR`, and the live-recording keys are reserved.
+
+## Production images and a one-host compose (w3-infra)
+
+Full log: [docs/decisions/w3-infra.md](decisions/w3-infra.md).
+
+- **Pinned, multi-stage, non-root images.** The backend uses
+  `node:22.23.4-bookworm-slim` in both stages, because Prisma's engines
+  target glibc and OpenSSL 3, and Alpine is a common source of "Query
+  Engine not found". `tini` is PID 1. The ai-service uses
+  `python:3.12.15-slim-bookworm` (manylinux wheels, no torch, no CUDA).
+  The web image serves the Vite build on
+  `nginxinc/nginx-unprivileged:1.30.6-alpine` (:8080).
+- **The same uid (1000) and mount path (`/app/uploads`) for backend and
+  ai-service.** They share the `uploads` volume, and the ai-service opens
+  the backend's absolute path. Equal uids make the volume's ownership
+  independent of which container mounts it first. The ai-service mounts
+  it read-only.
+- **The Whisper model is not baked in.** It downloads on first use into
+  the `whisper_models` volume (`HF_HOME=/models`). CPU int8, one uvicorn
+  worker, because the model is per process.
+- **Migrations run in a one-shot `migrate` service**
+  (`prisma migrate deploy`), and the backend waits for
+  `service_completed_successfully`. An entrypoint step would run on
+  every restart and race if scaled; a manual README step is easy to
+  forget.
+- **Caddy in front** gives automatic TLS and a single origin (`/api/*`
+  and `/health` to the backend, the rest to web). The frontend is built
+  with `VITE_API_URL=/api`: no CORS, no rebuild per domain. Caddy is the
+  only service with published ports.
+- **Secrets only through `${VAR:?}`** from `deploy/.env`, which the
+  existing `**/.env` rule ignores (`.env.prod` would not be). A missing
+  secret stops `up` with a clear error.
+- **One host, not a PaaS split**, because the ai-service must share a
+  filesystem with the backend (unless `TRANSCRIPTION_PROVIDER=deepgram`,
+  which is paid). `deploy/README.md` compares a Hetzner CX23 with Oracle
+  Always Free. The ai-service has a memory limit
+  (`AI_SERVICE_MEMORY_LIMIT`, default 2g), so a runaway transcription
+  cannot OOM Postgres.
+- **Not yet verified:** the images have not been built, locally or in
+  CI. The tag-triggered release workflow is not merged, because pushing
+  it needs a token with the `workflow` scope.
