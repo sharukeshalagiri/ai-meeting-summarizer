@@ -20,17 +20,28 @@ jobs, tests, CI, measured accuracy).
 - **Trace.** Every summary item links back to the moment it was said
   (a segment `idx`, played from its `startMs`).
 
-The current code is a working prototype of upload and browser-tab capture,
-plus the shared foundation for parallel work: the capture contract, the
-reserved schema, the UI contract, ownership rules and CI. Pair 1 has
+The current code handles uploads and live capture from three recorders,
+on top of the shared foundation for parallel work: the capture contract,
+the reserved schema, the UI contract, ownership rules and CI. Pair 1 has
 added stereo-aware transcription with faster-whisper (w1-asr) and the
-summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. Pair 4
-has added durable background jobs on pg-boss, with progress over SSE
+summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. Pair 2
+has added the recorders, all on the capture contract: the Chrome
+extension and the web Live page (w1-ext) and the desktop recorder
+(w1-desk). Pair 3 has added voice speaker attribution with stable labels
+across chunks, automatic names and renames (w2-spk), and an evaluation
+harness with a regression gate and a browser e2e (w2-eval). Pair 4 has
+added durable background jobs on pg-boss, with progress over SSE
 (w3-jobs, wired in by `chore/pair-4-wiring`), and production Docker
 images, a compose file and a deploy guide (w3-infra). Wave 4 has added
 accounts (w4-acct): email + password sign-in with server-side sessions,
 every query scoped by user, per-user device tokens for recorders,
-settings, audio retention, exports and meeting series.
+settings, audio retention, exports and meeting series. w3-jobs part 2
+then moved the end of the live flow onto jobs: `/end` assembles the
+chunks into one recording and runs the full pipeline on it.
+
+Not done yet: the accepted eval baseline and the AMI DER run (pending
+(baseline not yet run); `eval/baseline.json` is a placeholder), and the
+Pair 3 wiring requests listed under [Speakers](#speakers-w2-spk).
 
 ## Operating mode (every session follows this)
 
@@ -71,9 +82,11 @@ decision.
 | --- | --- | --- | --- |
 | `frontend/` | React 19, Vite 8, Tailwind 4, react-router 7 | 5173 | `FRONTEND_PORT` |
 | `backend/` | Express 5, TypeScript, Prisma 6, Gemini (`@google/genai`) | 5000 | `PORT` |
-| `ai-service/` | FastAPI + faster-whisper (CPU int8 / CUDA float16) | 8000 | `AI_SERVICE_PORT` |
+| `ai-service/` | FastAPI + faster-whisper (CPU int8 / CUDA float16), sherpa-onnx speaker embeddings (`POST /diarize`) | 8000 | `AI_SERVICE_PORT` |
 | PostgreSQL | `pgvector/pgvector:pg16` via `docker-compose.yml` | 5433 (host) | `POSTGRES_PORT` |
-| `extension/` | Chrome MV3 (incomplete, see below) | — | — |
+| `extension/` | Chrome MV3, loaded unpacked (see [Recorders](#recorders)) | — | — |
+| `desktop-recorder/` | Python 3.11+ tray app (see [Recorders](#recorders)) | — | — |
+| `eval/`, `e2e/` | tsx + vitest harness; Playwright (own `package.json` each) | — | — |
 
 The frontend reaches the backend through `VITE_API_URL`, and the backend
 reaches the ai-service through `AI_SERVICE_URL`. Only the backend talks to
@@ -94,7 +107,8 @@ NewMeeting.tsx
         parseSegments drops noSpeechProb > 0.75; segments keep channel + words
         -> storage artifact artifacts/<meetingId>/asr.json (lib/storage)
   job meeting-diarize      DIARIZING
-        diarization.service diarizeSegments
+        diarization.service diarizeSegments (no meeting context: mic lines = ME_DISPLAY_NAME,
+          the rest labelled by Gemini from the text; voice diarization is live-only so far)
         -> Transcript + TranscriptSegment rows (replaced; channel, words), durationSec
            no segments -> NO_SPEECH, status COMPLETED (stops here)
   job meeting-clean        CLEANING     CLEAN noise labels -> noiseLabel per segment
@@ -134,7 +148,9 @@ state (still 202). The older endpoints still work on top of the jobs:
 **When the queue is down** (pg-boss could not start; `server.ts` retries
 every 30 s), every route that queues work answers 503 "Background
 processing is unavailable right now. Try again shortly." before writing
-any stage. Reads still work. `GET /api/health` is always 200 and reports
+any stage: process, retry, events, summarize, resummarize, upload, live
+`/end`, and a late chunk on an ended live session. Reads still work, and
+chunks of an ACTIVE session are still transcribed (they need no queue). `GET /api/health` is always 200 and reports
 `queue: "up" | "down"`; `GET /api/health/ready` is 503 while it is down.
 The root `GET /health` is pure liveness.
 
@@ -160,32 +176,92 @@ Recorder (stereo: left = my mic, right = everyone else)
           duplicate of a transcribed seq -> 200 {duplicate:true} (replayed)
           same seq still processing      -> 409 (retry later with backoff; not a failure)
           failed seq                     -> processed again
-        Whisper with offset = startOffsetMs -> diarize -> segments at idx = seq*1000 + i
+        Whisper with offset = startOffsetMs
+        -> diarizeSegments with the meeting context (see Speakers below)
+        -> segments at idx = seq*1000 + i (sparse; the draft), speakerId linked by idx
         session.elapsedMs = max(elapsedMs, startOffsetMs + durationMs)
-        rolling summary every ROLLING_SUMMARY_MINUTES (best effort); chunk file kept
+        rolling summary every ROLLING_SUMMARY_MINUTES (best effort, ACTIVE sessions only)
+        chunk file kept (LiveChunk.path) for assembly; retention deletes it with the recording
+        session ENDED < 24 h ago: a late chunk (queue down -> 503 before any work);
+          with speech -> job live-late (singletonKey sessionId, starts 2 min later;
+            re-queues itself until 2 min without a chunk and no pipeline step running)
+            -> draft transcript rebuilt -> final pass again (origin "late")
+          ENDED > 24 h ago -> 410 (a transcribed seq still replays)
   POST /api/live/sessions/:id/roster {participants[]}   -> LiveSession.roster (name hints)
-  POST /api/live/sessions/:id/end                       final transcript, then queues the summarize job
-  reapStaleSessions (every 5 min) ends sessions idle > LIVE_SESSION_IDLE_MINUTES
+  POST /api/live/sessions/:id/end
+        queue down -> 503 before any write (the session stays ACTIVE; the recorder's retry
+          is a fresh /end). Repeated /end on ENDED with no stage and nothing running
+          -> queues the final pass that never got queued
+        draft segments -> Transcript, status TRANSCRIBED
+          (no segments and no FAILED chunk -> NO_SPEECH, COMPLETED, stops here)
+        LiveChunk rows exist -> meeting.service startLiveFinal (origin "live-final"):
+  job live-assemble        ASSEMBLING   jobs/assemble.ts, ffmpeg (FFMPEG_PATH)
+        each chunk decoded to 16 kHz PCM at its startOffsetMs; gaps, missing seqs,
+          missing or undecodable files -> silence of the same length
+        stereo only if every chunk is stereo-mic-left, else mono
+        -> recordings/<meetingId>/live.ogg (Opus) + manifest.json; Meeting.audioPath = live.ogg
+  job meeting-transcribe -> meeting-diarize -> clean -> summarize -> index (the upload chain)
+        diarize, final pass (jobs/liveFinal.ts): the new segments REPLACE the draft,
+          dense idx 0..n-1; speaker + speakerId copied from the draft segment that
+          overlaps most on the same channel (>= 30%); the rest -> diarizeSegments;
+          action-item evidence re-pointed by time; Corrections untouched;
+          an empty final transcript never replaces a draft with speech
+        assembly / transcribe / diarize fails for good -> keepLiveDraft: the draft is
+          summarized from CLEAN, note "The full recording could not be processed again,
+          so the summary uses the live transcript." (no draft -> NO_SPEECH)
+        no LiveChunk rows (legacy chunk form) -> job meeting-summarize on the draft, no assembly
+  job live-reap            cron */5 * * * * (registered by the server, never in tests):
+        ends sessions idle > LIVE_SESSION_IDLE_MINUTES, the same way as /end
 ```
 
-The rest of the live flow still runs in-process: chunk transcription,
-rolling summaries and the reaper (a `setInterval` in `server.ts`). Only
-the final summary is a durable job (`/end` calls the same
-`startSummary` as `POST /summarize`). The queues `live-assemble`,
-`live-late` and `live-reap` are created at boot but have no workers yet.
+Chunk transcription, speaker attribution and rolling summaries still run
+in the chunk request, on purpose: the recorder gets the segments in the
+response. Everything after `/end`, late chunks and the reaper are durable
+jobs (`jobs/live.ts`).
 
-The current web page (`useLiveCapture.ts`) still uses the **legacy** form
-of the chunk call: a `chunk` field with no `seq`. That path appends in
-arrival order, takes offsets from the session clock and deletes the file.
-It keeps working, but new recorders must use the contract.
+Every recorder in the repo now uses the contract, the web Live page
+included (`useLiveCapture.ts` on `frontend/src/lib/capture/`). The
+backend still accepts the **legacy** form of the chunk call (a `chunk`
+field with no `seq`): it appends in arrival order, takes offsets from the
+session clock and deletes the file, so such a session gets no assembly
+or final pass. No client here sends it any more. New recorders must use
+the contract.
 
 Playback: `GET /api/meetings/:id/audio` streams the stored recording with
 HTTP Range support (`res.sendFile`). It is owner-checked like every
 `/meetings/:id` path (another account's meeting is a 404), and `<audio>`
 sends the session cookie by itself. After the audio-retention job has
 deleted a recording (`audioDeletedAt` set, `audioPath` cleared) it is a
-404 too. Live meetings have no single recording, so it returns 404 for
-them.
+404 too. A live meeting plays once ASSEMBLING has finished
+(`audioPath` points at `recordings/<id>/live.ogg`); before that, or when
+no chunk audio could be assembled, it is a 404.
+
+### Speakers (w2-spk)
+
+```
+diarizeSegments(segments, context?)          services/diarization.service.ts
+  mic channel -> always the user: SpeakerProfile "mic", shown as Settings display name,
+                 else ME_DISPLAY_NAME ("You")
+  with a meeting context (live chunks, final-pass leftovers):
+    DIARIZATION_PROVIDER voice (default): ai-service POST /diarize, sherpa-onnx embeddings,
+      clusters per chunk -> services/speakers/matcher.ts matches them to the meeting's
+      SpeakerProfile centroids (serialised per meeting, in-process lock)
+      unavailable -> text -> continuity -> "Speaker 1" (attribution never fails a chunk)
+    text: Gemini from the conversation; deepgram: paid, label-stable only
+  without one (uploads, eval): Gemini text labels, plus the mic rule
+names (services/speakers/names.ts): applied only with two signals, otherwise a suggestion
+GET /api/meetings/:id/speakers ; PATCH /:id/speakers/:key {displayName} ; POST /:id/speakers/:key/accept
+  rename -> profile (MANUAL) + segments' speaker + SPEAKER Correction via record()
+TranscriptView: rename chip, suggestion chip, "Hide noise" (folds noiseLabel != substantive)
+```
+
+Requests from the w2-spk PR (#12) that are **not wired yet**:
+`withSpeakerNames` (on `GET /meetings/:id`) and `withOwnerNames` (on
+`GET /action-items`) exist in `speakers.service.ts` but no controller
+calls them, so a rename does not yet show in summary evidence or task
+owners. Uploads still get text diarization (`meeting-diarize` passes no
+context). `ai-service/pytest.ini` still has `testpaths = tests`, so CI
+does not collect `ai-service/diarization/tests`.
 
 ### Accounts and auth (w4-acct)
 
@@ -219,8 +295,14 @@ is assembled in `backend/src/routes/index.ts`.
 
 - **Segment references are always `TranscriptSegment.idx`, never array
   positions.** This applies to summary evidence, chat citations,
-  corrections and `jumpToSegment`. Live idx values are sparse
-  (`seq * 1000 + i`). See [`docs/SCHEMA_NOTES.md`](docs/SCHEMA_NOTES.md).
+  corrections and `jumpToSegment`. Upload idx values are dense (0..n-1).
+  Live idx values are sparse (`seq * 1000 + i`) during the call; the live
+  final pass replaces the draft with dense idx values (0..n-1) and
+  re-points kept action-item evidence by time. A late chunk is inserted
+  at its sparse idx again until the next final pass renumbers. So never
+  cache an idx across a final pass; anchor on `startMs` when you must.
+  See [`docs/SCHEMA_NOTES.md`](docs/SCHEMA_NOTES.md) (it describes the
+  sparse phase only).
 - **Schema reservation:** the `parallel_foundation` migration added every
   field Waves 1–3 need: `Meeting.mode` and `processing*`;
   `TranscriptSegment.channel`, `noiseLabel`, `words` and `speakerId`;
@@ -236,29 +318,53 @@ is assembled in `backend/src/routes/index.ts`.
   `{ seekTo(ms), jumpToSegment(idx), hasAudio }`, and the DOM helper
   `scrollToSegment(idx)`. `jumpToSegment` switches to the transcript tab,
   scrolls, highlights and plays from the segment's start.
-- **Provider types** (no implementations yet): `TranscriptionProvider` and
-  `DiarizationProvider` in `backend/src/types/providers.ts`.
+- **Provider types:** `TranscriptionProvider` and `DiarizationProvider`
+  in `backend/src/types/providers.ts`, both implemented.
+  Transcription: `backend/src/providers/transcription/` (`local`,
+  `deepgram`), through `AsrProvider`, which extends
+  `TranscriptionProvider` with the previous chunk's words. Diarization:
+  `backend/src/services/speakers/providers.ts` (`voice`, `text`,
+  `deepgram`). The header comment of `types/providers.ts` still says
+  nothing is wired; it is out of date.
 
 The reasons behind these choices (chunked Whisper instead of streaming,
-text-based diarization, `float8[]` instead of pgvector, embedding
-batching) are in **`docs/DECISIONS.md`**. Read it before changing any of
-them, and add an entry when you make a decision like these.
+voice diarization with a text fallback, `float8[]` instead of pgvector,
+embedding batching, live assembly and the final pass) are in
+**`docs/DECISIONS.md`**. Read it before changing any of them, and add an
+entry when you make a decision like these.
 
-### Extension status
+### Recorders
 
-`extension/` contains only `manifest.json`, `background.js` and
-`shared.js`. The manifest references `popup.html`, `content.js`,
-`offscreen.html` and `icons/`, which **do not exist**, and the comments
-mention an `EXTENSION.md` that doesn't exist either. The API base is
-hard-coded to `http://localhost:5000/api` (it can be overridden through
-`chrome.storage.local.apiBase`), and `host_permissions` hard-codes
-`localhost:5000`. The extension cannot be loaded yet. It still posts the
-legacy chunk form; moving it to the capture contract is w1-ext's job.
+All three send stereo chunks (left = mic, right = everyone else) under
+the capture contract and authenticate with a per-user device token (the
+web page uses the session cookie).
+
+- **`extension/`** (w1-ext): Chrome MV3, Chrome 116+, loaded unpacked;
+  install and 2-minute test steps are in `extension/README.md`. The
+  popup, offscreen recorder, permissions page, content script and
+  placeholder icons all exist. The backend URL defaults to
+  `http://localhost:5000/api` and is set in the popup's Settings; the
+  backend host is an *optional* host permission requested for that URL.
+  `extension/lib/capture/*.js` is **generated** from
+  `frontend/src/lib/capture/*.ts` by `node extension/scripts/build-capture.mjs`
+  (the frontend test `extensionCopy.test.ts` fails if it drifts).
+- **Web Live page** (w1-ext): `hooks/useLiveCapture.ts` on the same
+  `frontend/src/lib/capture/` code; tab audio plus the mic, 20 s chunks
+  kept in IndexedDB until confirmed.
+- **`desktop-recorder/`** (w1-desk): Python 3.11+ tray app for desktop
+  call apps; `source: "DESKTOP"`. Windows (WASAPI loopback) is built and
+  tested; Linux and macOS are untested. Durable on-disk queue. Tests:
+  `npm run test:desktop`. Details in `desktop-recorder/README.md`.
+
+Both recorder READMEs still describe the old shared `DEVICE_TOKEN`; use
+a per-user token from the Devices page instead (w4-acct).
 
 ## Setup and commands
 
 Prerequisites: Node 22+, Python 3.10+, Docker (for Postgres), ffmpeg on
-PATH (Whisper needs it to decode audio).
+PATH. Whisper needs it to decode audio, and the backend uses it to
+assemble live recordings (`FFMPEG_PATH`; without it the live final pass
+is skipped and the draft is summarized).
 
 ```bash
 # one-time
@@ -284,9 +390,24 @@ npm --prefix backend run user:password -- --list                    # users, mee
 # verify (run before calling anything done)
 npm run typecheck             # backend tsc (src + test) and frontend tsc -b
 npm run lint                  # frontend eslint
-npm test                      # backend vitest + ai-service pytest + scripts (node --test)
+npm test                      # backend vitest + ai-service pytest + scripts (node --test) + frontend vitest
 npm run check:ownership       # changed files vs docs/OWNERSHIP.md (track branches)
 npm run check                 # all of the above + frontend build
+npm run test:desktop          # desktop-recorder pytest (not part of npm test)
+
+# evaluation (w2-eval; eval/README.md). eval/ and e2e/ have their own package.json
+npm run setup:eval            # once: tsx, vitest, typescript for eval/
+npm run test:eval             # harness unit tests, no network (not part of npm test)
+npm run eval                  # every case with data -> eval/reports/<date>.md + .json (Gemini cap 30)
+npm run eval -- --cases smoke # 2 cases, about 6 Gemini requests
+npm run eval:check            # latest report vs eval/baseline.json: exit 1 regressed, 2 inconclusive
+npm run eval:accept -- --note "why"   # make the latest report the baseline, on purpose
+npm run eval:import-corrections       # Correction rows -> proposed expectations (--write to save)
+npm run eval:fetch-ami        # 5 AMI meetings, about 1 GB, gitignored (eval/data/ami/)
+npm run eval:new-case -- <slug> --audio rec.wav --meeting <id>   # a case from your own recording
+npm run eval:gen-long         # writes the generated 90-minute case to eval/.generated/
+npm run setup:e2e             # once: Playwright + chromium (headless shell)
+npm run test:e2e              # browser e2e with the API mocked in the page
 
 # parallel tracks
 npm run worktree:env <track>  # ports, env files, database, install, migrate for a track worktree
@@ -309,7 +430,10 @@ adds the root package as a `file:..` dependency.
 - Background jobs need Postgres (pg-boss, the default). `JOBS_DRIVER=memory`
   runs them in-process instead, lost on restart.
 - `npm run setup:ai` installs faster-whisper (no torch), with PyAV pinned
-  `<19`. For tests only, `npm run setup:ai:test` installs fastapi, httpx,
+  `<19`, and sherpa-onnx for voice diarization. The speaker-embedding
+  model (WeSpeaker ResNet34-LM, about 26 MB, CC BY 4.0) downloads on
+  first use into `ai-service/diarization/.models/` (gitignored) and is
+  checked against its SHA-256. For tests only, `npm run setup:ai:test` installs fastapi, httpx,
   python-multipart and pytest. The tests stub out `faster_whisper`.
   `npm run bench:asr` runs the transcription benchmark.
 - `backend` runs `prisma generate` on `postinstall`. Run
@@ -374,11 +498,24 @@ fails at boot):
 | `SMTP_PASSWORD` | unset | |
 | `SMTP_FROM` | Meeting Companion <no-reply@localhost> | |
 | `RETENTION_CRON` | 17 * * * * | when the audio-retention job runs (cron, UTC; hourly) |
+| `DIARIZATION_PROVIDER` | voice | `voice` (ai-service speaker embeddings, free; falls back to text when the ai-service has no model), `text` (Gemini infers turns from the conversation) or `deepgram` (paid per audio minute; needs `DEEPGRAM_API_KEY`, else boot fails); anything else fails at boot. Applies to live chunks; uploads always use text labels for now |
+| `ME_DISPLAY_NAME` | You | label for your own (mic channel) lines until renamed. The account's display name from Settings takes precedence (w4-acct); upload text labels still use this value |
+| `FFMPEG_PATH` | ffmpeg | ffmpeg binary for live assembly (w3-jobs); on PATH by default. Without it the final pass is skipped and the live draft is summarized |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
 precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (small), `WHISPER_DEVICE`
 (auto), `WHISPER_COMPUTE_TYPE` (int8 on CPU, float16 on CUDA),
-`WHISPER_LANGUAGE` (empty = auto-detect).
+`WHISPER_LANGUAGE` (empty = auto-detect). Speaker diarization (w2-spk,
+`POST /diarize`): `DIARIZATION_ENGINE` (sherpa; `pyannote` is optional,
+not installed, and needs torch, pyannote.audio and `HF_TOKEN` with the
+model's licence accepted), `SPEAKER_EMBEDDING_MODEL`
+(wespeaker_en_voxceleb_resnet34_LM, or a path to a local `.onnx`),
+`SPEAKER_MODEL_DIR` (empty = `diarization/.models/`),
+`SPEAKER_EMBEDDING_THREADS` (1), `HF_TOKEN` (empty).
+
+**Evaluation** (`npm run eval`) reads `backend/.env` itself (shell values
+win) and adds no variables of its own; `EVAL_NO_ENV_FILE=1` is a test
+knob that skips the file.
 
 **`frontend/.env.local`** (main checkout) or **`frontend/.env`** (written
 by `worktree:env`): `VITE_API_URL` (http://localhost:5000/api)
@@ -547,6 +684,19 @@ non-obvious code. Keep doing that.
   example the ownership glob rules.
 - `ai-service/tests/` (pytest) installs a fake `whisper` module, and the
   model is loaded lazily (`get_model()`), so `/health` never loads it.
+  `ai-service/diarization/tests/` uses a fake engine and a fake
+  `sherpa_onnx`, so no model is downloaded; run it with
+  `python -m pytest diarization/tests` (not collected by `pytest.ini`
+  yet, see Speakers).
+- Live jobs: `backend/test/` covers assembly (scripted, and real ffmpeg
+  where it is installed), speaker carry-over, the evidence remap, a
+  killed worker, a restart during the late wait and `/end` with the
+  queue down, on the memory driver.
+- `eval/test/` (`npm run test:eval`) and `e2e/` (`npm run test:e2e`) run
+  in the `eval-tests.yml` workflow with zero Gemini requests.
+  `eval-smoke.yml` (about 6 real requests, cap 8, no judge) runs only on
+  pushes to main that change the summary pipeline, or by hand, and does
+  not gate.
 - `fixtures/transcripts/`: synthetic transcripts
   (`{speaker,text,startMs,endMs}[]`), each with an `*.expected.json`
   answer key (`mustAppear` / `mustNotAppear`, with evidence timestamps).

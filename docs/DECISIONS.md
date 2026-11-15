@@ -39,6 +39,11 @@ endpoint, which would strand a session as `ACTIVE` forever. A sweep
 (`reapStaleSessions`, every 5 minutes) finalizes anything that has
 stopped sending audio for `LIVE_SESSION_IDLE_MINUTES`.
 
+**Update (w3-jobs part 2):** under the capture contract, chunk files are
+kept and assembled into one recording at `/end`, and the sweep is the
+`live-reap` cron job. See "Live assembly" and "Late chunks and the
+reaper are jobs" below.
+
 ## Diarization is inferred from the transcript, not the audio
 
 **Constraint:** speaker attribution with no paid API and no GPU.
@@ -64,6 +69,10 @@ labels everything `Speaker 1` rather than losing the transcript.
 
 Swapping in pyannote later means replacing this one service — nothing
 above it knows how the labels were produced.
+
+**Update (w2-spk):** this is now the `text` provider and the fallback.
+The default for live chunks is voice diarization; see "Speakers by
+voice" below. Uploads still use it.
 
 ## Vectors live in a `float8[]` column, not pgvector
 
@@ -190,6 +199,12 @@ docs/SCHEMA_NOTES.md), and `seq` is capped at 2 147 482 to stay inside a
 
 The legacy web page keeps its old path (no `seq`) so it doesn't break
 until w1-ext moves it over.
+
+**Update:** w1-ext moved the web page to the contract, so no client in
+the repo sends the legacy form now; the backend still accepts it. Since
+w3-jobs part 2, sparse idx holds during the call only: the live final
+pass rewrites the transcript with dense idx and re-points kept evidence
+by time (see "The live final pass" below).
 
 ## Device token instead of user auth, for now
 
@@ -703,3 +718,325 @@ above.
   series and the latest meeting's TL;DR, decisions, open questions,
   "prepare for next time" and "since last time". `seriesId` on
   `GET /search` and `POST /chat` limits retrieval to the series.
+
+## Live assembly: one recording from the chunks, silence for gaps (w3-jobs)
+
+Full log: [docs/decisions/w3-jobs.md](decisions/w3-jobs.md) (part 2).
+This replaces "chunk files are deleted once transcribed" in the first
+entry above: under the capture contract they are kept for assembly, and
+the audio-retention job deletes them with the recording.
+
+- **Decision.** At `/end`, job `live-assemble` (stage ASSEMBLING,
+  `jobs/assemble.ts`) decodes each chunk on its own with ffmpeg
+  (`FFMPEG_PATH`) to 16 kHz signed 16-bit PCM, writes it into one PCM
+  stream at its `startOffsetMs`, and encodes that stream once to
+  `recordings/<meetingId>/live.ogg` (Opus, 32 kb/s stereo, 24 kb/s mono)
+  through `lib/storage`. `recordings/<meetingId>/manifest.json` lists the
+  included chunks, the skipped ones with a reason, missing seqs and
+  silent spans. `Meeting.audioPath` then points at the recording, so
+  playback works for live meetings with no other change.
+- **Gaps are silence of the same length, never skipped.** A missing
+  seq, a chunk whose file is gone or one that will not decode becomes
+  silence. Skipping would shift everything after it, and the final pass
+  depends on the recording keeping the draft's timeline exactly. Each
+  slot is cut or padded to its exact length so encoder padding cannot
+  drift over an hour; overlapping chunks are cut at the next chunk's
+  start.
+- **Stereo only if every chunk is `stereo-mic-left`.** A mono chunk has
+  no mic/others split to put on the channels, so a mixed session is
+  assembled, and then transcribed, as mono.
+- **Why one decoder per chunk and one encoder.** Memory holds one
+  decoded chunk at a time (about 2 MB for 30 s), and the command line
+  never lists hundreds of inputs: a filter-graph concat would pass
+  Windows' 32 KB command-line limit on a long meeting. 16 kHz is what
+  Whisper resamples to anyway, so a one-hour stereo recording is about
+  15 MB.
+- **Cost.** ffmpeg is now a backend dependency, not only the
+  ai-service's; w3-jobs added it to the backend image.
+
+## The live final pass replaces the draft, speakers carried by overlap (w3-jobs)
+
+- **Decision.** After assembly, the normal upload chain (transcribe,
+  diarize, clean, summarize, index) runs on the recording with the
+  session's layout, hints and roster (`origin: "live-final"`). Its
+  segments **replace** the live draft. Each final segment takes the
+  speaker text and `speakerId` of the draft segment it overlaps most on
+  the same channel, if that covers at least 30% of its length
+  (`jobs/liveFinal.ts carrySpeakers`). Only segments with no draft
+  counterpart (audio from a chunk that failed live) are diarized, with
+  the meeting's profiles.
+- **Why copy instead of re-diarizing.** The user has already seen, and
+  may have renamed, the draft's speakers. Re-diarizing from scratch
+  could give "Speaker 2" to another voice and move a rename onto the
+  wrong person. Copying keeps renames exactly: the text shows the new
+  name, `speakerId` points at the MANUAL profile, and the SPEAKER
+  Correction still maps the old name. Corrections are never deleted or
+  rewritten by the pass.
+- **idx becomes dense.** The final segments are written with
+  `replaceForMeeting`, so idx is 0..n-1 like an upload, and the draft's
+  `seq * 1000 + i` values are gone. A late chunk after the pass is
+  inserted at its sparse idx until the next pass replaces everything
+  again. This refines the sparse-idx entry above: idx is stable during
+  the call, not across a final pass.
+- **Evidence is re-pointed by time.** The summarize step keeps
+  human-reviewed action items untouched, so their evidence would name
+  draft idx values and `jumpToSegment` would land nowhere. Right after
+  the new segments are written, every action item's evidence is
+  re-pointed (`remapEvidence`): its moment is the entry's own `startMs`,
+  else the draft segment's start (read before the draft is replaced),
+  and it gets the final segment that contains that moment, or the
+  nearest. `startMs` is kept so a later pass can remap again. Audited and
+  left alone: `Summary.data` evidence (regenerated), embeddings
+  (cascade and re-index), chat citations (they link by `startMs`, and
+  the timeline is unchanged), Correction `before`/`after` idx lists
+  (history, not navigation).
+- **Fallback: summarize the draft.** If assembly, transcription or
+  diarization of the final pass cannot complete (no usable chunk audio,
+  no ffmpeg, the ai-service down after its retries, a permanent error),
+  `keepLiveDraft` summarizes the draft from CLEAN with the note "The full
+  recording could not be processed again, so the summary uses the live
+  transcript." instead of marking the meeting FAILED. With no draft
+  either, the meeting is NO_SPEECH. An empty final transcript never
+  replaces a draft with speech. The user already watched a transcript
+  form during the call; losing it because the second pass failed would
+  be worse than a summary of the draft.
+- **Legacy sessions** (no `LiveChunk` rows; their files were deleted)
+  keep the old behaviour: `/end` queues the summary of the draft.
+
+## Late chunks and the reaper are jobs (w3-jobs)
+
+This replaces the in-memory debounce of the Pair 2 follow-ups and the
+`setInterval` reaper of the first entry above.
+
+- **Late chunks: a delayed `live-late` job.** A chunk with speech for a
+  session that ended less than 24 hours ago queues `live-late`, keyed by
+  session, starting 2 minutes later; while one waits, more sends are
+  dropped (singleton). When it runs it checks the session's
+  `lastChunkAt`: under 2 minutes of quiet it re-queues itself for the
+  rest, so it is a true debounce on the last chunk, and while a pipeline
+  step runs for the meeting it waits another 2 minutes. Then it rebuilds
+  the draft transcript (taking a NO_SPEECH meeting out of that state)
+  and runs the **whole final pass again** (`origin: "late"`), so the late
+  audio is in the recording, the transcript and the summary.
+- **Why a job.** The old in-process timer was lost on a restart, and
+  late chunks come exactly when things went wrong (a network drop, a
+  laptop sleep). The job is queued **before** the chunk is marked
+  TRANSCRIBED: if queuing fails, the chunk is FAILED and the recorder's
+  retry schedules it again. A late chunk answers 503 up front while the
+  queue is down.
+- **The reaper: `live-reap`, cron `*/5 * * * *`.** Registered with the
+  other schedules by the server only (never in tests). pg-boss runs it
+  once per tick across processes, so several backends no longer each
+  sweep. While the queue is down nothing is reaped, which is right:
+  ending a session then would only hit the 503 below.
+
+## `/end` answers 503 before any write while the queue is down (w3-jobs)
+
+- **Decision.** `/end` checks the queue first and answers 503 without
+  touching the session, chosen over "write, then let `/retry` recover".
+- **Why.** Both recorders (the extension's pending-ends alarm and the
+  desktop uploader) retry `/end` on any 5xx and treat 200 as done. If
+  `/end` wrote the transcript and ended the session before answering
+  503, the retry would get `alreadyEnded: true` and the recorder would
+  stop with no summary ever queued. Answering 503 first keeps the
+  session ACTIVE, so the retry is a fresh, complete `/end`.
+- **The remaining window** (the queue fails between the writes and the
+  enqueue): `startLiveFinal` resets the stage to null when the enqueue
+  fails, and a repeated `/end` on an ENDED session with
+  `processingStage` null and nothing running queues the final pass then.
+  So the recorder's retry recovers that case too.
+
+## Evaluation: a fixed Gemini budget, metered at the fetch level (w2-eval)
+
+Full log: [docs/decisions/w2-eval.md](decisions/w2-eval.md). How to
+run it: [eval/README.md](../eval/README.md).
+
+- **Budget.** A full run must fit 30 real Gemini requests. The mode
+  comes from the answer key (no CLASSIFY request), so a short case costs
+  CLEAN + EXTRACT + VERIFY = 3, the generated 90-minute case 6, and the
+  LLM judge runs **once per run**, batched over all cases, on the
+  flash-lite model: 7 × 3 + 6 + 1 = 28. Every attempt counts, retries
+  inside `withRetry` included; request 31 is refused before it is sent,
+  with a message `withRetry` does not treat as transient. A case starts
+  only if its estimate fits the rest of the budget minus one request
+  kept for the judge; otherwise it is `BUDGET_STOP`. AMI audio cases
+  (WER, DER me/others, "me" lines) cost 0 requests.
+- **Metering the global `fetch`, not the client.** The harness reaches
+  the pipeline only through exported functions and never changes it. The
+  first meter wrapped the Gemini client the harness imported, but under
+  tsx the harness (ESM) and the pipeline (CommonJS) loaded
+  `lib/gemini.ts` as two module instances with two clients, so the meter
+  saw only the judge's request (about 33 real attempts, cap not
+  enforced); vitest resolves both to one instance, which is why the unit
+  tests passed. Nothing from that run was accepted. The fix wraps the
+  global `fetch` for the Gemini API host, which @google/genai looks up
+  at call time, so every attempt from any module instance is seen.
+  Requests are paced per model (`--rpm`, default 5) and aborted after
+  `--request-timeout` (120 s). A run aborts (`MeterBlindError`) if a
+  case produced a summary while the meter counted nothing, and
+  `eval/test/cli.test.ts` runs the real CLI under tsx with a fake
+  `fetch` and checks the count. Rejected: a test hook in `lib/gemini.ts`
+  (not the track's file) and a proxy server (more moving parts). Risk:
+  if the SDK stops using the global `fetch`, the guard and that test
+  catch it.
+- **Outages never read as low accuracy.** The pipeline swallows some
+  failures on purpose (a failed CLEAN batch counts as substantive, a
+  failed VERIFY keeps the draft). A request whose last attempt still
+  failed with 503, 429, a quota error or a network error marks the case
+  `INFRA_ERROR`, whether or not the pipeline threw; it is re-run once
+  after `--retry-wait` if the budget allows. `INFRA_ERROR` and
+  `BUDGET_STOP` cases are left out of every number, and `eval:check`
+  exits 2 (inconclusive), not 1, when more than 25% of cases are in that
+  state. A `PIPELINE_ERROR` scores as "nothing found".
+- **Strict matching.** All match terms, same kind, one-to-one; the owner
+  must be equal, and a deadline needs the spoken phrase and, when the
+  key has `dueResolved`, the exact resolved date. The judge sees only
+  what string matching could not settle, and its answers are validated
+  against what it was offered.
+- **The 90-minute case is generated** from a ~5 KB template by a seeded
+  generator (`scripts/eval-gen-long.mjs`), so nothing large is
+  committed; filler is tested never to contain a match term or trap.
+- **Separate packages.** `eval/` and `e2e/` have their own
+  `package.json` and lockfile, so tsx, vitest and Playwright stay out of
+  the backend and frontend lockfiles and `setup:light` stays lean.
+- **e2e mocks the API in the browser** (`page.route`): the real
+  frontend in one headless chromium, about 300 MB of RAM, no backend,
+  database or AI. A full-stack e2e would need a way to point Gemini at a
+  stub.
+- **The smoke eval runs only when the pipeline changes**
+  (`eval-smoke.yml`: pushes to main touching w1-sum's pipeline files or
+  the two smoke fixtures, or by hand; never on PRs). About 6 requests,
+  cap 8, no judge; it passes with a notice when the `GEMINI_API_KEY`
+  secret is absent and does not gate.
+- **Baseline: pending (baseline not yet run).** `eval/baseline.json` is
+  a placeholder. The free tier allows 20 gemini-flash-latest requests a
+  day and a full run needs about 18 of them, so it must run on a fresh
+  daily quota, followed by `eval:accept`. Default tolerances (absolute):
+  task recall and precision 10 pt, hallucination and trap rate 5 pt,
+  exam recall 25 pt, date accuracy 10 pt, WER 3 pt, DER 5 pt, "me" 5 pt.
+  AMI WER and DER: pending (baseline not yet run).
+
+## Speakers by voice: sherpa-onnx embeddings, clustered per chunk (w2-spk)
+
+Full log: [docs/decisions/w2-spk.md](decisions/w2-spk.md). This makes
+the text-based entry above ("Diarization is inferred from the
+transcript") one provider of three, and the fallback.
+
+- **Me = the mic channel, no model.** Every `mic` segment is the user:
+  one SpeakerProfile with label `mic`, shown as the account's display
+  name (Settings, w4-acct), else `ME_DISPLAY_NAME` ("You"). Mic echo of
+  remote speech is already dropped by w1-asr.
+- **Others: voice by default.** `DIARIZATION_PROVIDER` is `voice`
+  (default), `text` (Gemini) or `deepgram` (paid), all behind
+  `DiarizationProvider`. Voice calls the ai-service's `POST /diarize`:
+  sherpa-onnx with the WeSpeaker ResNet34-LM model (256-d, CC BY 4.0,
+  about 26 MB, downloaded on first use and checked against its SHA-256,
+  never committed). Each remote segment is embedded in 3 s windows with
+  a 1.5 s hop and averaged (segments under 0.5 s are skipped), then the
+  chunk's segments are clustered (average-linkage cosine, merge at
+  >= 0.5).
+- **Why not pyannote.** pyannote 3.1 has the better published DER (AMI
+  18.8%), but it needs torch, well over the 1 GB RAM budget on the
+  development laptop, and a gated Hugging Face model (licence
+  acceptance, `HF_TOKEN`: gate e). sherpa-onnx needs no torch: measured
+  +52 MB after the model loads and a real-time factor of 0.047 on one
+  CPU thread. pyannote remains an optional ai-service engine
+  (`DIARIZATION_ENGINE=pyannote`, not installed). Deepgram returns no
+  embeddings and restarts its speaker numbers every request, so across
+  chunks it is only label-stable. Neither the paid nor the gated path
+  was exercised.
+- **Degrades, never fails a chunk.** Voice falls back to text when the
+  ai-service is down or has no model (503), then to continuity, then to
+  a single speaker.
+- **Measured, with caveats.** A bench on the first 10 minutes of one AMI
+  meeting (ES2004a Mix-Headset, 30 s chunks, reference turns as oracle
+  segments so ASR errors are excluded) gave **22.4% segment-time speaker
+  error** under the best 1:1 mapping. That has no overlap or
+  missed-speech terms, so it is **not a DER**, and one 10-minute meeting
+  is a sanity check, not a claim. It predicted 11 speakers for 4, and 5
+  of 15 boundary cuts still split a speaker. WeSpeaker's published
+  0.72% is a voice-verification EER and is not compared with any DER.
+  The project's AMI DER: pending (baseline not yet run).
+- **Scope today.** Voice diarization needs a meeting context, which only
+  live chunks (and final-pass segments with no draft counterpart) pass.
+  Uploads still use text labels plus the mic rule until the upload
+  diarize job passes a context (w2-spk request 5).
+
+## Stable speakers across chunks: matching to meeting profiles (w2-spk)
+
+- **The problem.** Each live chunk was labelled in isolation, so one
+  person could be "Speaker 2" in chunk n and "Priya" in chunk n+1
+  (reproduced in `backend/test/w2-spk/chunkBoundary.test.ts`).
+- **Decision.** `services/speakers/matcher.ts` (pure) matches each
+  chunk cluster to the meeting's SpeakerProfile centroids, greedy and
+  one-to-one, best pair first:
+  - long clusters (>= 1 s of speech): match at cosine >=
+    `MATCH_SIMILARITY` 0.55;
+  - short clusters: >= `SHORT_MATCH_SIMILARITY` 0.40, else continue the
+    previous chunk's last remote speaker if the cluster starts within
+    `CONTINUITY_MS` 1.5 s of the chunk start (a sentence cut by the
+    boundary);
+  - no match: a new "Speaker N".
+- **Centroid updates.** EMA `c' = normalize((1-a)c + a x)` with
+  `a = clamp(ms / (ms + 20 s), 0.05, 0.5)`, so no count column and **no
+  schema change**. A match moves the centroid only if it is at least
+  `UPDATE_SIMILARITY` 0.65 **and** beats the second-best profile by
+  `UPDATE_MARGIN` 0.05. A match between 0.55 and 0.65 keeps its label
+  but leaves the centroid alone.
+- **Why the 0.65 floor.** In the engineer's live test a second TTS voice
+  (cosine 0.47-0.54 to the first) drifted onto the first speaker's
+  profile: borderline matches pulled the centroid toward the other
+  voice until one profile could match every voice. On the AMI bench the
+  floor is neutral (22.4% and 5 of 15 splits at every value tried), so
+  it is a guard against drift, not an accuracy gain.
+- **Thresholds from a sweep.** 16 merge × match settings on the bench:
+  with merge 0.3-0.5, match 0.55 was best (22.4-22.9%); lower match
+  values merged different people (31-43%), 0.65 split more (25-28%), and
+  merge 0.6 fragmented the clusters (24-32%).
+- **Matching is serialised per meeting** with an in-memory lock, so two
+  concurrent chunks never create duplicate profiles. That holds within
+  one backend process.
+- **Known gaps:** over-segmentation of short turns, the remaining
+  boundary splits, and overlapping speakers (merged into one cluster).
+  First fixes to try: a minimum cluster duration before creating a
+  profile, and merging profiles whose centroids converge.
+
+## Speaker names: two signals to apply, one to suggest; renames at read time (w2-spk)
+
+- **Signals** (`services/speakers/names.ts`, regexes on the ASR text, no
+  Gemini): `self_intro` ("I'm Priya", "my name is", "this is Priya",
+  "Priya here"), `roster` (in `LiveSession.roster`) and `addressed`
+  (another speaker says "thanks, Priya", "Priya, can you ...").
+- **Applied automatically only with two signals:** self-introduction
+  AND (roster OR addressed by another speaker). Never over a MANUAL
+  rename or an existing name, never for the mic. A name claimed by two
+  speakers, or the user's own name, is dropped. One signal is only a
+  suggestion ("Priya?" chip, `POST /meetings/:id/speakers/:key/accept`).
+- **Why two.** One regex hit is easy to fool ("I'm Frank about this",
+  "I'm Sam's manager", "I'm sorry"; all tested), and a wrong name on
+  every line of a speaker is worse than "Speaker 2". Two independent
+  signals also work with no roster (the desktop recorder): an
+  introduction plus being addressed.
+- **Rename.** `PATCH /meetings/:id/speakers/:key {displayName}` sets the
+  profile's name (source MANUAL), renames that speaker's segments and
+  records a SPEAKER Correction through `record()` with the idx list.
+- **Summaries are not rewritten.** w1-sum owns them, so
+  `applySpeakerNames` (pure) projects current names at read time:
+  evidence takes the segment's current speaker by idx, and `speaker`,
+  `owner` and `assignedBy` strings equal to an old name are replaced;
+  free text (TL;DR) is left alone. **Not wired yet:** no controller calls
+  `withSpeakerNames` or `withOwnerNames` (w2-spk requests 1 and 2), so
+  until then a rename shows in the transcript only.
+
+## Hide noise folds lines, it never removes them (w2-spk)
+
+- **Decision.** `TranscriptView` has a "Hide noise" toggle, on by
+  default and shown only when some segment is labelled. It folds
+  segments whose `noiseLabel` (from the summary's CLEAN pass) is not
+  `substantive`; unlabelled segments (null) stay visible.
+- **Why folding.** The UI contract needs every `seg-<idx>` span in the
+  DOM, so hidden segments render as `<span id="seg-<idx>" data-start-ms
+  hidden>`, and a MutationObserver unfolds one when `jumpToSegment`
+  highlights it. Evidence and citations that point at a folded line
+  still land. CLEAN never deletes text either, so a wrong label costs a
+  click, not a line.

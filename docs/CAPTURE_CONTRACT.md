@@ -139,12 +139,19 @@ upload in parallel or re-send a backlog after a network drop.
 ```
 
 `elapsedMs` is the furthest chunk end seen so far, so it never moves
-backwards. Chunk files are kept on disk (`LiveChunk.path`) for later
-re-processing. Retention is w3-jobs' concern.
+backwards. Chunk files are kept on disk (`LiveChunk.path`) for the
+assembly at `/end` (see [4. End](#4-end)); the audio-retention job
+deletes them together with the recording.
 
-**Legacy form (web page only):** a multipart field `chunk` with
-`durationMs` and **no `seq`** takes the old path. That path appends in
-arrival order, uses offsets from the session clock and deletes the file.
+The segment `idx` values in this response (`seq * 1000 + i`) are the
+**live draft's**. The final pass after `/end` replaces the draft with
+dense idx values (0..n-1), so a recorder must not keep idx values for
+later use.
+
+**Legacy form (no client in this repo sends it any more):** a multipart
+field `chunk` with `durationMs` and **no `seq`** takes the old path.
+That path appends in arrival order, uses offsets from the session clock
+and deletes the file, so the session gets no assembly or final pass.
 New recorders must send `seq`.
 
 ## 3. Roster (optional, repeatable)
