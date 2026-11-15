@@ -107,7 +107,9 @@ services:
       WHISPER_COMPUTE_TYPE: int8
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
     volumes:
-      - uploads:/app/uploads
+      # Read-only: the ai-service only reads recordings the backend wrote
+      # (multipart uploads to /transcribe go to its own /tmp).
+      - uploads:/app/uploads:ro
       # Hugging Face cache: the Whisper model is downloaded here on first
       # use and kept across image upgrades (never baked into the image).
       - whisper_models:/models

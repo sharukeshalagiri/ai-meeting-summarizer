@@ -34,8 +34,11 @@ ENV PATH=/opt/venv/bin:$PATH \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE_TYPE=int8 \
     HF_HOME=/models
-RUN groupadd --system --gid 10001 app \
- && useradd --system --uid 10001 --gid app --home-dir /app --shell /usr/sbin/nologin app \
+# uid/gid 1000 on purpose: the same as the backend image's `node` user,
+# so whichever container mounts the shared uploads volume first, the
+# ownership Docker copies into the empty volume works for both.
+RUN groupadd --gid 1000 app \
+ && useradd --uid 1000 --gid app --home-dir /app --shell /usr/sbin/nologin app \
  && mkdir -p /models /app/uploads \
  && chown app:app /models /app/uploads
 COPY --from=build /opt/venv /opt/venv
