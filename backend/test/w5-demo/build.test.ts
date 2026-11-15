@@ -59,7 +59,7 @@ describe("demo meetings", () => {
           if (i > 0) expect(s.startMs).toBeGreaterThanOrEqual(meeting.segments[i - 1].endMs);
           expect(isNoiseLabel(s.noiseLabel)).toBe(true);
         });
-        expect(meeting.durationSec).toBe(Math.ceil(meeting.segments.at(-1)!.endMs / 1000));
+        expect(meeting.durationSec).toBe(Math.ceil(meeting.segments[meeting.segments.length - 1].endMs / 1000));
       });
 
       it("puts the recording user on the mic channel and everyone else on the remote one", () => {

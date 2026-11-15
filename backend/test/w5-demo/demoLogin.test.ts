@@ -1,11 +1,13 @@
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
+import { createApp } from "../../src/app";
+import * as demoRepo from "../../src/demo/demo.repository";
 
 /**
  * "Try the demo" end to end with a real session cookie: passport,
  * express-session and the Prisma session store (its repository replaced
  * by an in-memory table), as in test/w4-acct/auth.test.ts. DEMO_MODE is
- * switched on before the env module loads.
+ * switched on in vi.hoisted, which runs before the imports load env.
  */
 
 const { sessions, users } = vi.hoisted(() => {
@@ -65,8 +67,6 @@ vi.mock("../../src/repositories/meeting.repository", () => ({
   }),
 }));
 
-const { createApp } = await import("../../src/app");
-const demoRepo = await import("../../src/demo/demo.repository");
 const app = createApp();
 
 const cookieOf = (res: request.Response) =>
