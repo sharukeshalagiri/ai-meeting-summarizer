@@ -4,6 +4,7 @@ import * as correctionRepo from "../../repositories/correction.repository";
 import * as exportRepo from "../../repositories/export.repository";
 import * as segmentRepo from "../../repositories/segment.repository";
 import { BadRequest, NotFound, UpstreamError } from "../../types/errors";
+import { withSpeakerNames } from "../speakers/speakers.service";
 import { reviewedActionItems } from "../w1-sum.service";
 import { buildExport, type ExportDocument } from "./exportModel";
 import { getTransport } from "./mailer";
@@ -24,9 +25,11 @@ export const loadExport = async (
   const meeting = await exportRepo.findForExport(meetingId);
   if (!meeting) throw NotFound("Meeting not found");
 
-  const [corrections, segments] = await Promise.all([
+  const [corrections, segments, named] = await Promise.all([
     correctionRepo.findByMeetingId(meetingId),
     options.includeTranscript ? segmentRepo.findByMeetingId(meetingId) : Promise.resolve([]),
+    // Speaker renames, projected at read time like the meeting page.
+    withSpeakerNames({ id: meetingId, summary: meeting.summary, actionItems: meeting.actionItems }),
   ]);
 
   const doc = buildExport({
@@ -38,8 +41,8 @@ export const loadExport = async (
       mode: meeting.mode,
       seriesName: meeting.series?.name ?? null,
     },
-    summaryData: meeting.summary?.data ?? null,
-    actionItems: meeting.actionItems,
+    summaryData: named.summary?.data ?? null,
+    actionItems: named.actionItems,
     rejectedTasks: reviewedActionItems(corrections).suppressTasks,
     segments,
     meLabel: meeting.user.displayName?.trim() || env.meDisplayName,

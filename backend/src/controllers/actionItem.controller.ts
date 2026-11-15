@@ -4,6 +4,7 @@ import { sendSuccess } from "../types/api";
 import { asyncHandler } from "../utils/asyncHandler";
 import { currentUserId } from "../middleware/auth.middleware";
 import { assertActionItemOwner } from "../services/account/access.service";
+import { withOwnerNames } from "../services/speakers/speakers.service";
 import { optionalString, requireParam } from "../utils/validate";
 
 export const getActionItems = asyncHandler(
@@ -13,7 +14,8 @@ export const getActionItems = asyncHandler(
       optionalString(req.query.status)
     );
 
-    return sendSuccess(res, items, "Action items fetched");
+    // Owners show the speakers' current names (read-time, w2-spk D5).
+    return sendSuccess(res, await withOwnerNames(items), "Action items fetched");
   }
 );
 

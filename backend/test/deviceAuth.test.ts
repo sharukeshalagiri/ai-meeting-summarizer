@@ -15,6 +15,18 @@ import { errorHandler } from "../src/middleware/error.middleware";
  */
 
 // The real-route test below looks tokens up here; no database.
+
+// Read-time speaker names (speakers.service) look up profiles and
+// corrections; none here, so responses pass through unchanged.
+vi.mock("../src/repositories/speakerProfile.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+vi.mock("../src/repositories/correction.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+
 vi.mock("../src/repositories/deviceToken.repository", () => ({
   findByHash: vi.fn(async () => null),
   markUsed: vi.fn(async () => ({ id: "x" })),

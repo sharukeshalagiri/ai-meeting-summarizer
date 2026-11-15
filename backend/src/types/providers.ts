@@ -1,10 +1,11 @@
 /**
  * Provider interfaces for swappable speech back ends.
  *
- * Types only: no implementation is wired yet. Wave 1 (w1-asr) implements
- * TranscriptionProvider, Wave 2 (w2-spk) implements DiarizationProvider.
- * Services should depend on these interfaces, not on a concrete client,
- * so Whisper, faster-whisper, a hosted API, or pyannote can be swapped
+ * Implemented and wired: TranscriptionProvider by w1-asr
+ * (providers/transcription/, TRANSCRIPTION_PROVIDER local | deepgram),
+ * DiarizationProvider by w2-spk (services/speakers/providers.ts,
+ * DIARIZATION_PROVIDER voice | text | deepgram). Services depend on these
+ * interfaces, not on a concrete client, so a back end can be swapped
  * without touching callers.
  */
 

@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import * as actionItemService from "../services/actionItem.service";
 import * as meetingService from "../services/meeting.service";
+import { withSpeakerNames } from "../services/speakers/speakers.service";
 import * as summaryLookup from "../services/summaryLookup.service";
 import * as transcriptService from "../services/transcript.service";
 import { sendSuccess } from "../types/api";
@@ -45,7 +46,8 @@ export const getMeetingById = asyncHandler(
       requireParam(req.params.id, "meeting id")
     );
 
-    return sendSuccess(res, meeting, "Meeting fetched");
+    // Speaker renames are projected at read time (w2-spk D5).
+    return sendSuccess(res, await withSpeakerNames(meeting), "Meeting fetched");
   }
 );
 
@@ -87,11 +89,11 @@ export const getMeetingTranscript = asyncHandler(
 
 export const getMeetingSummary = asyncHandler(
   async (req: Request, res: Response) => {
-    const summary = await summaryLookup.getSummaryByMeeting(
-      requireParam(req.params.id, "meeting id")
-    );
+    const id = requireParam(req.params.id, "meeting id");
+    const summary = await summaryLookup.getSummaryByMeeting(id);
+    const named = await withSpeakerNames({ id, summary });
 
-    return sendSuccess(res, summary, "Summary fetched");
+    return sendSuccess(res, named.summary, "Summary fetched");
   }
 );
 
@@ -107,11 +109,11 @@ export const getMeetingSegments = asyncHandler(
 
 export const getMeetingActionItems = asyncHandler(
   async (req: Request, res: Response) => {
-    const items = await actionItemService.listByMeeting(
-      requireParam(req.params.id, "meeting id")
-    );
+    const id = requireParam(req.params.id, "meeting id");
+    const items = await actionItemService.listByMeeting(id);
+    const named = await withSpeakerNames({ id, actionItems: items });
 
-    return sendSuccess(res, items, "Action items fetched");
+    return sendSuccess(res, named.actionItems, "Action items fetched");
   }
 );
 

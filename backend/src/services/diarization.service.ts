@@ -2,6 +2,7 @@ import { env } from "../lib/env";
 import { toGeminiError } from "../lib/gemini";
 import { logger } from "../lib/logger";
 import type { DiarizedSegment, RawSegment } from "../types/segment";
+import { meLabelForMeeting } from "./account/context";
 import {
   attributeChunk,
   type AttributedSegment,
@@ -17,20 +18,26 @@ const log = logger.child({ module: "diarization.service" });
  * - Segments on the "mic" channel are the user, always (left channel of
  *   the capture contract). The ASR already dropped mic echo of remote
  *   speech, so no model is needed for them.
- * - With a meeting context (live capture), the rest is diarized by voice
- *   (ai-service speaker embeddings) and matched to the meeting's
+ * - With a meeting context (live chunks, the live final pass and
+ *   uploads), the rest is diarized by DIARIZATION_PROVIDER (voice, i.e.
+ *   ai-service speaker embeddings, by default) and matched to the meeting's
  *   SpeakerProfiles, so labels stay stable across chunks; see
  *   services/speakers/attribute.ts.
- * - Without one (uploads, evaluation), the rest is labelled by Gemini
+ * - Without one (evaluation), the rest is labelled by Gemini
  *   from conversational cues, the original text-level approximation
  *   (docs/DECISIONS.md).
  */
 
 export type { AttributedSegment, SpeakerContext };
 
-/** Text-only attribution for callers with no meeting context. */
+/**
+ * Text-only attribution: callers with no meeting context, and the
+ * fallback when profile attribution fails. `meLabel` labels the mic
+ * lines: the owner's Settings display name, else ME_DISPLAY_NAME.
+ */
 const labelByText = async (
-  segments: RawSegment[]
+  segments: RawSegment[],
+  meLabel: string = env.meDisplayName
 ): Promise<DiarizedSegment[]> => {
   const others = segments.filter((s) => s.channel !== "mic");
   let labels: string[] = [];
@@ -57,14 +64,14 @@ const labelByText = async (
   let next = 0;
   return segments.map((segment) => ({
     ...segment,
-    speaker: segment.channel === "mic" ? env.meDisplayName : labels[next++],
+    speaker: segment.channel === "mic" ? meLabel : labels[next++],
   }));
 };
 
 /**
  * Assigns a speaker to every segment, in order, same length.
  *
- * `context` is optional so existing callers (uploads, w2-eval's DER run)
+ * `context` is optional so context-free callers (w2-eval's DER run)
  * keep `diarizeSegments(segments)`. With it, segments also carry the
  * resolved `speakerId`; store it with `linkSegmentSpeakers` once the
  * segments are written.
@@ -90,5 +97,5 @@ export async function diarizeSegments(
     }
   }
 
-  return labelByText(segments);
+  return labelByText(segments, await meLabelForMeeting(context?.meetingId));
 }

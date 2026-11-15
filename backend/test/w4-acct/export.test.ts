@@ -13,6 +13,14 @@ import { toLatin1, toMarkdown, toPdf } from "../../src/services/export/render";
  * builds the message and sends nothing).
  */
 
+
+// Read-time speaker names (speakers.service) look up profiles and
+// corrections; none here, so responses pass through unchanged.
+vi.mock("../../src/repositories/speakerProfile.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+
 vi.mock("../../src/repositories/export.repository", () => ({ findForExport: vi.fn() }));
 vi.mock("../../src/repositories/correction.repository", () => ({
   findByMeetingId: vi.fn(async () => [

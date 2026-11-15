@@ -22,6 +22,14 @@ const store = vi.hoisted(() => ({
   replaceCalls: [] as { items: { task: string }[]; options: unknown }[],
 }));
 
+
+// Read-time speaker names (speakers.service) look up profiles and
+// corrections; none here, so responses pass through unchanged.
+vi.mock("../../src/repositories/speakerProfile.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+
 vi.mock("../../src/lib/gemini", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/gemini")>();
   const { fakeClient } = await import("./helpers/fakeGemini");
