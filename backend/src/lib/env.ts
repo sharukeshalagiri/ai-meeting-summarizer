@@ -119,6 +119,30 @@ const storageDriver = (): "local" => {
   return value;
 };
 
+/**
+ * Speaker diarization (w2-spk): voice (ai-service speaker embeddings,
+ * default), text (Gemini infers turns), or deepgram (paid per minute,
+ * needs DEEPGRAM_API_KEY). Voice falls back to text when unavailable.
+ */
+const diarizationProvider = (): "voice" | "text" | "deepgram" => {
+  const value = optional("DIARIZATION_PROVIDER", "voice").trim().toLowerCase();
+
+  if (value !== "voice" && value !== "text" && value !== "deepgram") {
+    throw new Error(
+      `DIARIZATION_PROVIDER must be "voice", "text" or "deepgram", got "${value}".`
+    );
+  }
+
+  if (value === "deepgram" && !process.env.DEEPGRAM_API_KEY?.trim()) {
+    throw new Error(
+      "Missing required environment variable: DEEPGRAM_API_KEY. " +
+        "It is required when DIARIZATION_PROVIDER=deepgram."
+    );
+  }
+
+  return value;
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   isProduction,
@@ -188,6 +212,10 @@ export const env = {
   storageDriver: storageDriver(),
   /** Root of local storage (recordings, job artifacts), relative to backend/. */
   storageDir: optional("STORAGE_DIR", "uploads"),
+  /** See diarizationProvider() above. */
+  diarizationProvider: diarizationProvider(),
+  /** Label for the user's own (mic channel) segments until renamed. */
+  meDisplayName: optional("ME_DISPLAY_NAME", "You").trim().slice(0, 60) || "You",
 } as const;
 
 export type Env = typeof env;

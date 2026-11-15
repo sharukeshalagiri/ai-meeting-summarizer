@@ -6,3 +6,5 @@ faster-whisper
 av<19
 numpy
 python-multipart
+# w2-spk: speaker diarization (sherpa-onnx, no torch).
+-r diarization/requirements.txt

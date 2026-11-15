@@ -19,6 +19,7 @@ import { MeetingStatus, ProcessingStage } from "../types/meeting";
 import { toSpeakerTranscript } from "../types/segment";
 import { toRollingJsonValue } from "../types/summary";
 import { diarizeSegments } from "./diarization.service";
+import { linkSegmentSpeakers } from "./speakers/attribute";
 import * as meetingService from "./meeting.service";
 import {
   transcribeAudioDetailed,
@@ -250,12 +251,39 @@ export const ingestChunk = async (input: {
     // reported when the chunk was silence and produced no segments.
     const chunkMs = result.durationMs || Math.max(0, input.durationMs);
 
+    // Speakers are matched to the meeting's profiles (stable labels
+    // across chunks); "previous" gives the boundary its continuity.
     const diarized = result.segments.length
-      ? await diarizeSegments(result.segments)
+      ? await diarizeSegments(result.segments, {
+          meetingId: session.meetingId,
+          filePath: input.filePath,
+          channelLayout: "mono",
+          offsetMs,
+          roster: session.roster ?? [],
+          previous: recent,
+        })
       : [];
 
     if (diarized.length) {
       await segmentRepo.appendForMeeting(session.meetingId, diarized);
+
+      // appendForMeeting numbers the rows itself; read their idx back
+      // to store the speaker links.
+      if (diarized.some((segment) => segment.speakerId)) {
+        const written = await segmentRepo.findRecentByMeetingId(
+          session.meetingId,
+          diarized.length
+        );
+        await linkSegmentSpeakers(
+          session.meetingId,
+          written.map((row, i) => ({
+            idx: row.idx,
+            text: row.text,
+            speakerId: diarized[i]?.speakerId,
+          })),
+          { roster: session.roster ?? [] }
+        );
+      }
     }
 
     const updated = await liveRepo.recordChunk(session.id, chunkMs);
@@ -512,8 +540,18 @@ export const ingestContractChunk = async (input: {
       transcribeOptionsFor(session, input.channelLayout, tailWords(previous))
     );
 
+    // Voice diarization of the remote channel, matched to the
+    // meeting's SpeakerProfiles, so a speaker keeps one label across
+    // chunk boundaries (docs/decisions/w2-spk.md).
     let diarized = result.segments.length
-      ? await diarizeSegments(result.segments)
+      ? await diarizeSegments(result.segments, {
+          meetingId: session.meetingId,
+          filePath: input.filePath,
+          channelLayout: input.channelLayout,
+          offsetMs: input.startOffsetMs,
+          roster: session.roster ?? [],
+          previous,
+        })
       : [];
 
     if (diarized.length > SEGMENTS_PER_CHUNK) {
@@ -531,6 +569,12 @@ export const ingestContractChunk = async (input: {
     }));
 
     await segmentRepo.insertAtIdx(session.meetingId, segments);
+
+    // Stores speakerId by idx (segment rows only carry the label) and
+    // applies a speaker name once two signals agree. Best effort.
+    await linkSegmentSpeakers(session.meetingId, segments, {
+      roster: session.roster ?? [],
+    });
 
     const updated = await liveRepo.recordContractChunk(
       session.id,
