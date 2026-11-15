@@ -166,7 +166,34 @@ attribution (w2-spk); they don't create speakers. **200** →
 
 Finalizes the transcript and runs the summary. Calling it twice is safe:
 the second call returns `alreadyEnded: true`. Sessions that stop sending
-audio for `LIVE_SESSION_IDLE_MINUTES` are ended automatically.
+audio for `LIVE_SESSION_IDLE_MINUTES` are ended automatically (a
+scheduled job, every 5 minutes).
+
+What happens after `/end` (all background jobs; the response does not
+wait):
+
+1. The chunks' segments (the **live draft**) become the transcript at
+   once.
+2. **Assembly** (`ASSEMBLING`): every stored chunk is placed at its
+   `startOffsetMs` on one timeline and encoded into one recording
+   (Opus, 16 kHz). Stereo (left = mic, right = others) is kept when
+   every chunk is `stereo-mic-left`; if any chunk is mono, the recording
+   is mono. A missing `seq`, a chunk whose file is gone, or one that
+   will not decode becomes **silence of the same length** (never a
+   shift), and is listed in the recording's manifest.
+3. **Final pass**: the normal pipeline (transcribe, attribute speakers,
+   clean, summarize, index) runs on that recording, and its transcript
+   **replaces the live draft**. Every final segment keeps the speaker of
+   the draft segment it overlaps most, so speaker renames carry over;
+   Correction rows are never touched. `GET /api/meetings/:id/audio`
+   then plays the recording.
+4. If assembly or the re-transcription cannot run (no ffmpeg, the
+   ai-service stays down), the live draft is summarized instead, with a
+   note on the meeting.
+
+**While the backend's job queue is down, `/end` answers 503 before
+changing anything**: the session stays open, and retrying `/end` later
+(as for any 5xx) is a complete, normal `/end`.
 
 A session that ends with no speech at all is not a failure: the meeting
 gets `processingStage: "NO_SPEECH"` (status `COMPLETED`), and the app
@@ -182,17 +209,19 @@ them:
   otherwise the chunk goes through the normal claim, so 409 and
   failed-retry work as above, and `idx = seq * 1000 + i`.
 - The session stays `ENDED`, and no rolling summary runs.
-- A late chunk that adds speech (at least one segment) schedules a
-  re-summary **2 minutes later**. Each further late chunk restarts that
-  timer, so a backlog costs one summary. The transcript and duration
-  are then rebuilt from all segments and the summary runs again. A
-  `NO_SPEECH` meeting moves to `TRANSCRIBED` first. A chunk that was
-  already processing when `/end` arrived and finishes after it does the
-  same.
-- Silent chunks, duplicates and 409s never schedule a re-summary.
-- The timer is in memory: if the backend restarts during those 2
-  minutes, the summary stays stale until another late chunk arrives
-  (durable jobs are w3-jobs' work).
+- A late chunk that adds speech (at least one segment) schedules the
+  final pass again (assembly included, so the late audio is in the
+  recording), once the session has had **no chunk for 2 minutes**:
+  each further late chunk pushes it back, so a backlog costs one pass.
+  It also waits while a pass is still running. The transcript and
+  duration are first rebuilt from all segments, so a `NO_SPEECH`
+  meeting moves to `TRANSCRIBED`. A chunk that was already processing
+  when `/end` arrived and finishes after it does the same.
+- Silent chunks, duplicates and 409s never schedule a pass.
+- The wait is a durable background job: a backend restart during those
+  2 minutes no longer loses it.
+- A late chunk needs the job queue: while it is down the answer is
+  **503** before anything is processed. Retry it like any 5xx.
 
 ## Recorder checklist
 
@@ -200,8 +229,8 @@ them:
 - [ ] Number chunks with `seq` from 0, and compute `startOffsetMs` from
       the recording clock, not upload time.
 - [ ] Stereo with mic on the left → `channelLayout: "stereo-mic-left"`.
-- [ ] Keep unsent chunks in a local queue. Retry 409, 502 and network
-      errors with backoff. Treat `duplicate: true` as success. Stop on
+- [ ] Keep unsent chunks in a local queue. Retry 409, 5xx (502, 503) and
+      network errors with backoff. Treat `duplicate: true` as success. Stop on
       401 or 410.
 - [ ] Call `/end` when the meeting ends. Rely on the idle reaper only as
       a fallback.

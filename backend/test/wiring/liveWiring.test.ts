@@ -7,7 +7,7 @@ import * as fakes from "../helpers/liveFakes";
 /**
  * Live capture wiring: every chunk transcription gets the session's
  * layout, hints, roster and the previous chunk's tail words (D1 edge
- * de-dup), and /end starts the summary in the background.
+ * de-dup), and /end queues the final pass in the background.
  */
 
 vi.mock("../../src/repositories/liveSession.repository", async () =>
@@ -130,7 +130,7 @@ describe("live chunk transcription options", () => {
 });
 
 describe("POST /api/live/sessions/:id/end", () => {
-  it("returns at once and starts the summary in the background", async () => {
+  it("returns at once and queues the final pass in the background", async () => {
     const { sessionId, meetingId } = await start();
     await sendChunk(sessionId, 0, "hello there").expect(200);
 
@@ -138,7 +138,9 @@ describe("POST /api/live/sessions/:id/end", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ meetingId, alreadyEnded: false, summary: null, summarizing: true });
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    // Contract chunks are on record: assemble + full pipeline, not just a summary.
+    expect(fakes.store.finalPasses).toEqual([{ meetingId, sessionId, origin: "live-final" }]);
+    expect(fakes.store.summariesStarted).toEqual([]);
   });
 });
 

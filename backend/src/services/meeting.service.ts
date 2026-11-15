@@ -300,6 +300,52 @@ export const startSummary = async (meetingId: string) => {
   return processingState(meetingId, ProcessingStage.SUMMARIZING);
 };
 
+/** True while any pipeline step is queued or running for the meeting. */
+export const isProcessing = (meetingId: string): Promise<boolean> =>
+  isPipelineBusy(meetingId);
+
+/**
+ * Queues the live final pass for an ended capture session: assemble its
+ * chunks into one recording, then transcribe, diarize (speakers carried
+ * over from the draft), clean, summarize and index it. The live draft
+ * stays the transcript until the diarize step replaces it.
+ *
+ * Stage first, then the job (stage at enqueue). If queuing fails the
+ * stage goes back to null, which is how a repeated /end recognizes an
+ * end whose final pass was never queued.
+ */
+export const startLiveFinal = async (
+  meetingId: string,
+  sessionId: string,
+  origin: "live-final" | "late"
+) => {
+  assertJobsAvailable();
+
+  if (await isPipelineBusy(meetingId)) return currentState(meetingId);
+
+  await setProgress(meetingId, {
+    stage: ProcessingStage.ASSEMBLING,
+    progress: 0,
+    error: null,
+    status: MeetingStatus.PROCESSING,
+  });
+
+  try {
+    await enqueue(
+      Queues.LIVE_ASSEMBLE,
+      { meetingId, origin, sessionId } satisfies PipelineJob,
+      { singletonKey: meetingId }
+    );
+  } catch (error) {
+    await setProgress(meetingId, { stage: null }).catch(() => undefined);
+    throw error;
+  }
+
+  log.info("Live final pass queued", { meetingId, sessionId, origin });
+
+  return processingState(meetingId, ProcessingStage.ASSEMBLING);
+};
+
 /**
  * POST /meetings/:id/retry: resumes a meeting whose pipeline failed (or
  * stalled). With segments it re-runs from CLEAN (clean, summarize,

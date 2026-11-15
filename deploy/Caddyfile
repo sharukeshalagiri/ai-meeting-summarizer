@@ -1,6 +1,6 @@
 # Reverse proxy for docker-compose.prod.yml.
 #
-# DOMAIN comes from deploy/.env.prod. With a real domain whose DNS A/AAAA
+# DOMAIN comes from deploy/.env.With a real domain whose DNS A/AAAA
 # record points at this host, Caddy obtains and renews a Let's Encrypt
 # certificate automatically. With DOMAIN=localhost it serves a local,
 # self-signed certificate (fine for a smoke test).

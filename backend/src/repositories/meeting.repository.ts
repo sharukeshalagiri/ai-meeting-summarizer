@@ -64,6 +64,16 @@ export const updateAudio = (
     data: { audioPath, status },
   });
 
+/**
+ * Points the meeting at a recording without touching its status (the
+ * live final pass sets the assembled recording mid-pipeline).
+ */
+export const setAudioPath = (id: string, audioPath: string) =>
+  prisma.meeting.update({
+    where: { id },
+    data: { audioPath },
+  });
+
 /** Recorded once transcription reveals how long the recording was. */
 export const updateDuration = (id: string, durationSec: number) =>
   prisma.meeting.update({

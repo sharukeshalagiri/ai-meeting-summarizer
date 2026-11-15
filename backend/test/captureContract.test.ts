@@ -244,11 +244,16 @@ describe("late chunks (after the session ended)", () => {
   const end = (sessionId: string) =>
     request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
 
+  /** The pass the late job queued, as the fake startLiveFinal saw it. */
+  const passes = () => fakes.store.finalPasses.map((pass) => pass.meetingId);
+
   beforeEach(() => {
     cancelScheduledResummaries();
-    // Only the debounce timer is faked; supertest and Express keep
-    // their real timers.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // The late pass is a delayed live-late job on the in-process queue,
+    // which runs on setTimeout; it compares Date.now() with the
+    // session's lastChunkAt, so Date is faked too. supertest and Express
+    // keep their real timers.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   });
 
   afterEach(() => {
@@ -285,12 +290,13 @@ describe("late chunks (after the session ended)", () => {
     expect(late.body.data.segments[0].idx).toBe(2000);
   });
 
-  it("re-summarizes once, 2 minutes after the last of several late chunks", async () => {
+  it("re-runs the final pass once, 2 minutes after the last of several late chunks", async () => {
     const { sessionId, meetingId } = await startSession();
 
     await sendChunk(sessionId, 0, "before");
     await end(sessionId);
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
+    expect(fakes.store.finalPasses[0].origin).toBe("live-final");
 
     expect((await sendChunk(sessionId, 1, "late a")).status).toBe(200);
     await vi.advanceTimersByTimeAsync(TWO_MIN - 30_000);
@@ -298,20 +304,21 @@ describe("late chunks (after the session ended)", () => {
 
     // 2 min after the first, but only 1.5 min after the second.
     await vi.advanceTimersByTimeAsync(TWO_MIN - 30_000);
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
 
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(fakes.store.summariesStarted).toEqual([meetingId, meetingId]);
+    expect(passes()).toEqual([meetingId, meetingId]);
+    expect(fakes.store.finalPasses[1].origin).toBe("late");
     expect(fakes.store.transcripts.get(meetingId)).toBe(
       "before late a late b"
     );
     expect(fakes.store.meetings.get(meetingId)!.durationSec).toBe(60);
 
     await vi.advanceTimersByTimeAsync(10 * TWO_MIN);
-    expect(fakes.store.summariesStarted).toHaveLength(2);
+    expect(passes()).toHaveLength(2);
   });
 
-  it("does not re-summarize for a duplicate or a silent late chunk", async () => {
+  it("does not re-run for a duplicate or a silent late chunk", async () => {
     const { sessionId, meetingId } = await startSession();
 
     await sendChunk(sessionId, 0, "before");
@@ -326,10 +333,10 @@ describe("late chunks (after the session ended)", () => {
     expect(silent.body.data.segments).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(10 * TWO_MIN);
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
   });
 
-  it("waits another 2 minutes while a summary is still running", async () => {
+  it("waits another 2 minutes while a pipeline step is still running", async () => {
     const { sessionId, meetingId } = await startSession();
 
     await sendChunk(sessionId, 0, "before");
@@ -338,11 +345,11 @@ describe("late chunks (after the session ended)", () => {
 
     await sendChunk(sessionId, 1, "late");
     await vi.advanceTimersByTimeAsync(TWO_MIN);
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
 
     fakes.store.runningSummaries.delete(meetingId);
     await vi.advanceTimersByTimeAsync(TWO_MIN);
-    expect(fakes.store.summariesStarted).toEqual([meetingId, meetingId]);
+    expect(passes()).toEqual([meetingId, meetingId]);
   });
 
   it("marks a session that ends with no speech NO_SPEECH, not FAILED", async () => {
@@ -354,10 +361,11 @@ describe("late chunks (after the session ended)", () => {
     const meeting = fakes.store.meetings.get(meetingId)!;
     expect(meeting.processingStage).toBe("NO_SPEECH");
     expect(meeting.status).toBe("COMPLETED");
+    expect(passes()).toEqual([]);
     expect(fakes.store.summariesStarted).toEqual([]);
   });
 
-  it("moves a NO_SPEECH meeting to TRANSCRIBED and re-summarizes on late speech", async () => {
+  it("moves a NO_SPEECH meeting to TRANSCRIBED and runs the final pass on late speech", async () => {
     const { sessionId, meetingId } = await startSession();
 
     await end(sessionId);
@@ -372,10 +380,10 @@ describe("late chunks (after the session ended)", () => {
     expect(meeting.status).toBe("TRANSCRIBED");
     expect(meeting.processingStage).toBeNull();
     expect(fakes.store.transcripts.get(meetingId)).toBe("finally audio");
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
   });
 
-  it("schedules a re-summary for a chunk claimed before /end that finishes after it", async () => {
+  it("schedules the late pass for a chunk claimed before /end that finishes after it", async () => {
     vi.useRealTimers();
     const { sessionId, meetingId } = await startSession();
 
@@ -391,14 +399,111 @@ describe("late chunks (after the session ended)", () => {
       "NO_SPEECH"
     );
 
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     release();
     expect((await pending).status).toBe(200);
-    expect(fakes.store.summariesStarted).toEqual([]);
+    expect(passes()).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(TWO_MIN);
-    expect(fakes.store.summariesStarted).toEqual([meetingId]);
+    expect(passes()).toEqual([meetingId]);
     expect(fakes.store.meetings.get(meetingId)!.status).toBe("TRANSCRIBED");
+  });
+});
+
+describe("late pass survives a restart during the wait (live-late job)", () => {
+  it("a new process picks up the waiting job and runs the pass", async () => {
+    const { MemoryQueue } = await import("../src/jobs/memoryQueue");
+    const { QUEUE_DEFINITIONS } = await import("../src/jobs/definitions");
+    const { late } = await import("../src/jobs/live");
+    const jobs = await import("../src/jobs/index");
+
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const { sessionId, meetingId } = await startSession();
+      await sendChunk(sessionId, 0, "before");
+      await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+      expect((await sendChunk(sessionId, 1, "late")).status).toBe(200);
+
+      // The waiting live-late job is in the queue's store, not a timer.
+      const first = await jobs.getQueue();
+      expect(await first.pending("live-late", sessionId)).toHaveLength(1);
+
+      // "Restart": the old process stops (its timers die with it) ...
+      const store = (first as InstanceType<typeof MemoryQueue>).store;
+      await first.stop();
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(fakes.store.finalPasses).toHaveLength(1);
+
+      // ... and the next one, on the same store, runs the waiting job.
+      // Its clock starts where the wait ends (the old queue's clock may be
+      // ahead of the faked Date after earlier tests).
+      const dueAt = Math.max(...store.jobs.map((job) => job.startAfter));
+      const second = new MemoryQueue({ store, now: () => dueAt });
+      for (const definition of QUEUE_DEFINITIONS) await second.createQueue(definition);
+      await second.work("live-late", late);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(fakes.store.finalPasses.map((p) => [p.meetingId, p.origin])).toEqual([
+        [meetingId, "live-final"],
+        [meetingId, "late"],
+      ]);
+      await second.stop();
+    } finally {
+      vi.useRealTimers();
+      await jobs.stopJobs();
+    }
+  });
+});
+
+describe("POST /end while the queue is down", () => {
+  it("answers 503 before writing anything; the retry is a complete /end", async () => {
+    const jobs = await import("../src/jobs/index");
+    const { sessionId, meetingId } = await startSession();
+    await sendChunk(sessionId, 0, "hello");
+
+    const spy = vi.spyOn(jobs, "assertJobsAvailable").mockImplementation(() => {
+      throw jobs.jobsUnavailable();
+    });
+    try {
+      const down = await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+      expect(down.status).toBe(503);
+      expect(fakes.store.sessions.get(sessionId)!.status).toBe("ACTIVE");
+      expect(fakes.store.transcripts.has(meetingId)).toBe(false);
+      expect(fakes.store.finalPasses).toEqual([]);
+
+      // A late chunk on an ended session also needs the queue: 503.
+    } finally {
+      spy.mockRestore();
+    }
+
+    const up = await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+    expect(up.status).toBe(200);
+    expect(up.body.data.alreadyEnded).toBe(false);
+    expect(fakes.store.finalPasses.map((p) => p.meetingId)).toEqual([meetingId]);
+  });
+
+  it("a repeated /end queues a final pass that was never queued", async () => {
+    const { sessionId, meetingId } = await startSession();
+    await sendChunk(sessionId, 0, "hello");
+
+    // The first /end wrote the draft but could not queue (stage left null).
+    const failing = vi
+      .spyOn(fakes.meetingService, "startLiveFinal")
+      .mockRejectedValueOnce(new Error("queue went away"));
+    const first = await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+    expect(first.status).toBe(500);
+    failing.mockRestore();
+    expect(fakes.store.sessions.get(sessionId)!.status).toBe("ENDED");
+
+    const again = await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+    expect(again.status).toBe(200);
+    expect(again.body.data).toMatchObject({ alreadyEnded: true, summarizing: true });
+    expect(fakes.store.finalPasses.map((p) => p.meetingId)).toEqual([meetingId]);
+
+    // Once it is queued (stage set), a third /end changes nothing.
+    fakes.store.meetings.get(meetingId)!.processingStage = "ASSEMBLING";
+    await request(app).post(`/api/live/sessions/${sessionId}/end`).send({});
+    expect(fakes.store.finalPasses).toHaveLength(1);
   });
 });
 

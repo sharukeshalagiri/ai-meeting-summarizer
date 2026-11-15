@@ -126,4 +126,18 @@ export interface PipelineJob {
   origin: PipelineOrigin;
   /** resummarize: IANA zone for resolving deadlines. */
   timezone?: string | null;
+  /** live-final and late: the capture session the meeting came from. */
+  sessionId?: string;
+  /** live-final and late: layout of the assembled recording (set by assemble). */
+  channelLayout?: "stereo-mic-left" | "mono";
+}
+
+/** The live final pass: assemble -> transcribe -> diarize (speakers carried) -> ... */
+export const isLiveFinal = (job: PipelineJob): job is PipelineJob & { sessionId: string } =>
+  (job.origin === "live-final" || job.origin === "late") && typeof job.sessionId === "string";
+
+/** Delayed re-run of the final pass after late chunks (live-late queue). */
+export interface LateJob {
+  sessionId: string;
+  meetingId: string;
 }

@@ -73,3 +73,13 @@ export const markFailed = (id: string, error: string) =>
     where: { id },
     data: { status: "FAILED", error: error.slice(0, 1000) },
   });
+
+/**
+ * Every chunk of a session, in seq order (live assembly). Includes
+ * FAILED and PROCESSING rows: their audio may still be on disk.
+ */
+export const findBySession = (sessionId: string) =>
+  prisma.liveChunk.findMany({
+    where: { sessionId },
+    orderBy: { seq: "asc" },
+  });
