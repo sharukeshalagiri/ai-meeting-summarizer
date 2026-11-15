@@ -48,7 +48,8 @@ const readHidden = (question: string): Promise<string> =>
 const readPiped = async (): Promise<string> => {
   let data = "";
   for await (const chunk of process.stdin) data += chunk;
-  return data.replace(/\r?\n$/, "");
+  // Windows PowerShell pipes text with a byte-order mark and CRLF.
+  return data.replace(/^﻿/, "").replace(/\r?\n$/, "");
 };
 
 const main = async () => {
