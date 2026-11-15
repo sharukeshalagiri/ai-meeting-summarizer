@@ -38,7 +38,9 @@
     "eval:gen-long": "node scripts/eval-gen-long.mjs",
     "test:eval": "npm --prefix eval test",
     "setup:e2e": "cd e2e && npm install && npx playwright install chromium --only-shell",
-    "test:e2e": "npm --prefix e2e test"
+    "test:e2e": "npm --prefix e2e test",
+    "screenshots": "node scripts/screenshots.mjs",
+    "readme:accuracy": "node scripts/readme-accuracy.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.7"

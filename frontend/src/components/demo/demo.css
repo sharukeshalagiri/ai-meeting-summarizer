@@ -1,0 +1,21 @@
+.demo-cta {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
+
+.demo-button {
+  width: 100%;
+  font-weight: 600;
+}
+
+.demo-banner {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  text-align: center;
+  background: var(--accent-soft, #eef2ff);
+  color: var(--text, inherit);
+  border-bottom: 1px solid var(--border, #e5e7eb);
+}
