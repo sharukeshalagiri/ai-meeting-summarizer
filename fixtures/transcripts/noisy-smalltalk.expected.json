@@ -1,0 +1,78 @@
+{
+  "transcript": "noisy-smalltalk.json",
+  "mode": "general",
+  "description": "Mostly social team chat (football, barbecue, vacation, pizza) with a single real task buried in the middle: Jo renews the company domain today.",
+  "mustAppear": [
+    {
+      "id": "task-renew-domain",
+      "kind": "actionItem",
+      "match": [
+        "domain"
+      ],
+      "owner": "Jo",
+      "dueDate": "today",
+      "dueResolved": "2026-11-09",
+      "evidenceStartMs": [
+        45200
+      ]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-football",
+      "kind": "any",
+      "match": [
+        "football"
+      ],
+      "reason": "Small talk."
+    },
+    {
+      "id": "smalltalk-barbecue",
+      "kind": "any",
+      "match": [
+        "barbecue"
+      ],
+      "reason": "Social plan."
+    },
+    {
+      "id": "smalltalk-lisbon",
+      "kind": "any",
+      "match": [
+        "lisbon"
+      ],
+      "reason": "Vacation small talk."
+    },
+    {
+      "id": "smalltalk-cat",
+      "kind": "any",
+      "match": [
+        "keyboard"
+      ],
+      "reason": "Anecdote."
+    },
+    {
+      "id": "smalltalk-pineapple",
+      "kind": "any",
+      "match": [
+        "pineapple"
+      ],
+      "reason": "Joke."
+    },
+    {
+      "id": "not-a-task-pizza",
+      "kind": "actionItem",
+      "match": [
+        "pizza"
+      ],
+      "reason": "A vague social maybe, not a task."
+    },
+    {
+      "id": "not-a-decision-pizza",
+      "kind": "decision",
+      "match": [
+        "pizza"
+      ],
+      "reason": "Nothing was decided."
+    }
+  ]
+}

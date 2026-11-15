@@ -1,0 +1,20 @@
+{
+  "name": "eval",
+  "private": true,
+  "description": "Accuracy evaluation of the summary and transcription pipeline (w2-eval). See eval/README.md.",
+  "type": "module",
+  "scripts": {
+    "eval": "tsx src/cli.ts run",
+    "check": "tsx src/cli.ts check",
+    "accept": "tsx src/cli.ts accept",
+    "import-corrections": "tsx src/cli.ts import-corrections",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

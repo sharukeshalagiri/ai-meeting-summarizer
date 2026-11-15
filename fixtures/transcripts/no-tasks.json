@@ -1,0 +1,98 @@
+[
+  {
+    "speaker": "Nina",
+    "text": "Okay, this is the quarterly read-out, no action needed from anyone, it's just for context.",
+    "startMs": 0,
+    "endMs": 5800
+  },
+  {
+    "speaker": "Nina",
+    "text": "Weekly active users grew eleven percent this quarter, mostly from the new onboarding flow.",
+    "startMs": 6200,
+    "endMs": 11600
+  },
+  {
+    "speaker": "Omar",
+    "text": "Did churn change at all?",
+    "startMs": 12000,
+    "endMs": 14400
+  },
+  {
+    "speaker": "Nina",
+    "text": "Churn stayed flat at about four percent, which is fine but not better.",
+    "startMs": 14800,
+    "endMs": 19800
+  },
+  {
+    "speaker": "Omar",
+    "text": "Interesting. And support tickets?",
+    "startMs": 20200,
+    "endMs": 22600
+  },
+  {
+    "speaker": "Nina",
+    "text": "Tickets dropped by a fifth after the billing page redesign.",
+    "startMs": 23000,
+    "endMs": 26800
+  },
+  {
+    "speaker": "Omar",
+    "text": "That matches what the support team told us.",
+    "startMs": 27200,
+    "endMs": 30200
+  },
+  {
+    "speaker": "Nina",
+    "text": "Someone should probably clean up the old analytics dashboard at some point, half the charts are broken.",
+    "startMs": 30600,
+    "endMs": 37000
+  },
+  {
+    "speaker": "Omar",
+    "text": "Yeah, at some point. Not now.",
+    "startMs": 37400,
+    "endMs": 39800
+  },
+  {
+    "speaker": "Nina",
+    "text": "One process thing: the weekly retro has felt repetitive.",
+    "startMs": 40200,
+    "endMs": 43600
+  },
+  {
+    "speaker": "Omar",
+    "text": "Agreed, there's rarely anything new week to week.",
+    "startMs": 44000,
+    "endMs": 47000
+  },
+  {
+    "speaker": "Nina",
+    "text": "So we've decided: from now on the retro is monthly instead of weekly.",
+    "startMs": 47400,
+    "endMs": 52400
+  },
+  {
+    "speaker": "Omar",
+    "text": "Works for me.",
+    "startMs": 52800,
+    "endMs": 55200
+  },
+  {
+    "speaker": "Omar",
+    "text": "One thing I still don't understand is why mobile engagement dipped in August. Do we know?",
+    "startMs": 55600,
+    "endMs": 61600
+  },
+  {
+    "speaker": "Nina",
+    "text": "We don't know yet. It's an open question.",
+    "startMs": 62000,
+    "endMs": 65000
+  },
+  {
+    "speaker": "Nina",
+    "text": "That's all for the read-out, thanks everyone.",
+    "startMs": 65400,
+    "endMs": 68000
+  }
+]

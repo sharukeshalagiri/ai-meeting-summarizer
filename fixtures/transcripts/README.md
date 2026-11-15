@@ -10,6 +10,16 @@ meeting.
 | --- | --- | --- |
 | `project-meeting.json` | `project-meeting.expected.json` | project |
 | `lecture.json` | `lecture.expected.json` | lecture |
+| `interview-interviewer.json` | `interview-interviewer.expected.json` | interview (the user asks) |
+| `interview-candidate.json` | `interview-candidate.expected.json` | interview (the user answers) |
+| `one-on-one.json` | `one-on-one.expected.json` | one-on-one |
+| `noisy-smalltalk.json` | `noisy-smalltalk.expected.json` | general |
+| `no-tasks.json` | `no-tasks.expected.json` | general |
+
+The 90-minute case is generated, not stored here: see
+`scripts/eval-gen-long.mjs` and `eval/README.md`. Relative deadlines
+are resolved against the meeting start in `eval/cases/index.json`
+(Monday 2026-11-09, 15:00 UTC, America/New_York).
 
 ## Transcript format
 
@@ -28,17 +38,21 @@ overlap.
 ```jsonc
 {
   "transcript": "project-meeting.json",
-  "mode": "project",               // project | lecture | interview | one-on-one
+  "mode": "project",               // project | lecture | interview | one-on-one | general
+  "me": "Dana",                     // optional: the recording user's speaker name
+  "counts": { "actionItem": 0 },   // optional: exact number of produced items of a kind
   "mustAppear": [
     {
       "id": "task-search-endpoint", // stable name for reports
       "kind": "actionItem",          // see kinds below
       "match": ["endpoint"],         // every term must appear in the item text
       "owner": "Marcus",             // actionItem only; null = no owner stated
-      "dueDate": "Friday",           // actionItem/homework; quoted as spoken, null = none
+      "dueDate": "Friday",           // actionItem/homework/date; quoted as spoken, null = none
+      "dueResolved": "2026-11-13",  // optional: the calendar date dueDate means
       "evidenceStartMs": [76200]     // startMs of the segment(s) that say it
     }
   ],
+  "mayAppear": [],                   // optional: allowed but not required (neutral for precision)
   "mustNotAppear": [
     {
       "id": "smalltalk-rain",
@@ -51,9 +65,11 @@ overlap.
 ```
 
 **Kinds:** `actionItem`, `decision`, `openQuestion`, `date` (all modes);
-`examTopic`, `definition`, `homework` (lecture mode).
+`examTopic`, `definition`, `homework` (lecture mode); `qa`, `concern`,
+`strength`, `followUp`, `struggledWith` (interview mode); `feedback`
+(one-on-one mode). `eval/src/items.ts` maps each kind to its summary field.
 
-**Matching rules** (for whatever evaluator is built later):
+**Matching rules** (implemented in `eval/src/match.ts`):
 
 - An expected item is found when one produced item of the same kind
   contains every `match` term, case-insensitive.

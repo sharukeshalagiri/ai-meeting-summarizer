@@ -1,0 +1,23 @@
+# Reverse proxy for docker-compose.prod.yml.
+#
+# DOMAIN comes from deploy/.env.prod. With a real domain whose DNS A/AAAA
+# record points at this host, Caddy obtains and renews a Let's Encrypt
+# certificate automatically. With DOMAIN=localhost it serves a local,
+# self-signed certificate (fine for a smoke test).
+
+{$DOMAIN:localhost} {
+	encode zstd gzip
+
+	# API, capture contract and audio playback (Range requests pass through).
+	handle /api/* {
+		reverse_proxy backend:5000
+	}
+	handle /health {
+		reverse_proxy backend:5000
+	}
+
+	# Everything else is the static single-page app.
+	handle {
+		reverse_proxy web:8080
+	}
+}

@@ -1,0 +1,122 @@
+[
+  {
+    "speaker": "Morgan",
+    "text": "Hi Alex, can you hear me okay? The weather here is awful, so the connection might drop.",
+    "startMs": 0,
+    "endMs": 6400
+  },
+  {
+    "speaker": "Alex",
+    "text": "Loud and clear. It's sunny here for once.",
+    "startMs": 6800,
+    "endMs": 9800
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Lucky you. Let me just grab a coffee refill. Okay, I'm back. Shall we start?",
+    "startMs": 10200,
+    "endMs": 16000
+  },
+  {
+    "speaker": "Alex",
+    "text": "Sure, ready when you are.",
+    "startMs": 16400,
+    "endMs": 18800
+  },
+  {
+    "speaker": "Morgan",
+    "text": "First, walk me through a project you're proud of.",
+    "startMs": 19200,
+    "endMs": 22600
+  },
+  {
+    "speaker": "Alex",
+    "text": "I built an offline-first notes app. Edits are stored locally and synced with a conflict-free replicated data type, so two devices never lose each other's changes.",
+    "startMs": 23000,
+    "endMs": 32800
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Nice. How did you test the sync?",
+    "startMs": 33200,
+    "endMs": 35800
+  },
+  {
+    "speaker": "Alex",
+    "text": "With property-based tests that replay random edit sequences on two simulated devices and check they converge.",
+    "startMs": 36200,
+    "endMs": 42200
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Great. Next: how would you spread cache keys across servers so adding a server doesn't reshuffle everything?",
+    "startMs": 42600,
+    "endMs": 49000
+  },
+  {
+    "speaker": "Alex",
+    "text": "Um, I would hash the key and take it modulo the number of servers? Actually, wait, that reshuffles everything.",
+    "startMs": 49400,
+    "endMs": 56600
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Right. Have you heard of consistent hashing?",
+    "startMs": 57000,
+    "endMs": 59600
+  },
+  {
+    "speaker": "Alex",
+    "text": "I've heard the name but I can't explain how consistent hashing works, sorry.",
+    "startMs": 60000,
+    "endMs": 65000
+  },
+  {
+    "speaker": "Morgan",
+    "text": "No worries. Last question: why do you want to join a small team?",
+    "startMs": 65400,
+    "endMs": 70400
+  },
+  {
+    "speaker": "Alex",
+    "text": "I like owning features end to end, from the database to the UI, and seeing users react quickly.",
+    "startMs": 70800,
+    "endMs": 77600
+  },
+  {
+    "speaker": "Morgan",
+    "text": "That comes through. Could you send me a link to the notes app repository?",
+    "startMs": 78000,
+    "endMs": 83400
+  },
+  {
+    "speaker": "Alex",
+    "text": "Yes, I'll send you the portfolio link by tomorrow.",
+    "startMs": 83800,
+    "endMs": 87200
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Perfect. I'll get you an answer by Wednesday.",
+    "startMs": 87600,
+    "endMs": 90600
+  },
+  {
+    "speaker": "Morgan",
+    "text": "If it's a yes, the final round is on November 18th, in person.",
+    "startMs": 91000,
+    "endMs": 96000
+  },
+  {
+    "speaker": "Alex",
+    "text": "Sounds good, thank you so much.",
+    "startMs": 96400,
+    "endMs": 98800
+  },
+  {
+    "speaker": "Morgan",
+    "text": "Thanks Alex, talk soon.",
+    "startMs": 99200,
+    "endMs": 101600
+  }
+]

@@ -1,0 +1,72 @@
+{
+  "description": "Synthetic 90-minute quarterly planning meeting: about 240 segments of status updates with twelve planted items (five tasks, two decisions, an open question, a date) spread across the whole meeting, so map-reduce has to carry items from both halves. Built by scripts/eval-gen-long.mjs; nothing here is real.",
+  "mode": "project",
+  "seed": 20261109,
+  "targetMs": 5400000,
+  "speakers": ["Ana", "Ben", "Chloe", "Dev", "Eli"],
+  "opening": [
+    ["Ana", "Morning all, let's give people a minute to join. Did anyone actually go on the ski trip in the end?"],
+    ["Ben", "I did, the snow was terrible, mostly ice. Still worth it for the views."],
+    ["Chloe", "I stayed home and painted the hallway, very glamorous."],
+    ["Ana", "Okay, let's start. This is the quarterly planning session, it's a long one, so we'll go area by area."]
+  ],
+  "closing": [
+    ["Ana", "Okay, I think that's everything for the quarter. Thanks everyone for sitting through ninety minutes."],
+    ["Eli", "Thanks Ana. Enjoy the rest of the day."]
+  ],
+  "areas": ["search indexing", "the settings page", "the export job", "the notification service", "the admin console", "log retention", "the staging cluster", "the docs site", "the billing reports", "the onboarding emails"],
+  "openers": ["On {area},", "For {area},", "Quick update on {area}:", "About {area},", "Regarding {area},"],
+  "statements": [
+    "things are moving along and nothing is blocking us right now.",
+    "we closed most of the open bugs over the last two weeks.",
+    "the numbers look about the same as they did at the last sync.",
+    "we're still reviewing the last round of feedback from the pilot users.",
+    "it has been stable, with no incidents since the last sync.",
+    "the error rate is down a little, which is nice to see.",
+    "most of the work this month was cleanup rather than new features.",
+    "the dashboards look healthy and latency is within the usual range.",
+    "we paired with the design team to tidy up a few rough edges.",
+    "usage is flat, which is roughly what we expected for this time of year.",
+    "we upgraded a couple of libraries and nothing broke, which is a small miracle.",
+    "the test suite is a bit faster after the last round of fixes.",
+    "customers mostly asked about small wording changes, nothing structural.",
+    "there was one noisy alert that turned out to be a false positive.",
+    "the code review queue is shorter than it was last quarter."
+  ],
+  "replies": [
+    "Makes sense, thanks.",
+    "Good to hear.",
+    "Okay, that matches what I saw too.",
+    "Nice, that's better than I expected.",
+    "Got it, nothing to add from my side.",
+    "Sounds fine to me."
+  ],
+  "planted": [
+    { "atMinute": 6, "id": "task-ci-runners", "kind": "actionItem", "match": ["runners"], "owner": "Ben", "dueDate": "Friday", "dueResolved": "2026-11-13",
+      "lines": [["Ana", "Ben, the old CI machines are being retired. Can you take the migration?"], ["Ben", "Yes, I'll migrate CI to the new runners by Friday."]], "evidence": 1 },
+    { "atMinute": 14, "id": "decision-mobile-beta-march", "kind": "decision", "match": ["mobile beta", "march"],
+      "lines": [["Chloe", "We need to settle the mobile timeline."], ["Ana", "Okay, decided then: we ship the mobile beta in March, not February."]], "evidence": 1 },
+    { "atMinute": 23, "id": "task-hiring-plan", "kind": "actionItem", "match": ["hiring plan"], "owner": "Chloe", "dueDate": "end of next week", "dueResolved": "2026-11-20",
+      "lines": [["Ana", "We have two open headcount for next year."], ["Chloe", "I'll draft the hiring plan by the end of next week."]], "evidence": 1 },
+    { "atMinute": 31, "id": "parked-billing-rewrite", "kind": "trap", "trapKind": "actionItem", "match": ["billing rewrite"], "reason": "Explicitly parked, no owner.",
+      "lines": [["Dev", "Should we start the billing rewrite this quarter?"], ["Ana", "No, the billing rewrite is parked until next year. Nobody picks it up for now."]] },
+    { "atMinute": 38, "id": "task-on-call-rotation", "kind": "actionItem", "match": ["on-call"], "owner": "Dev", "dueDate": "tomorrow", "dueResolved": "2026-11-10",
+      "lines": [["Eli", "The on-call rotation still lists people who left."], ["Dev", "I'll update the on-call rotation tomorrow."]], "evidence": 1 },
+    { "atMinute": 47, "id": "question-security-contractor", "kind": "openQuestion", "match": ["contractor"],
+      "lines": [["Eli", "Do we hire an outside contractor for the security audit, or do it ourselves? I don't think we can answer that today."], ["Ana", "Agreed, let's leave that open."]], "evidence": 0 },
+    { "atMinute": 55, "id": "decision-freeze-api-v1", "kind": "decision", "match": ["v1"],
+      "lines": [["Ben", "Are we still adding endpoints to the old API?"], ["Ana", "No. Decision: API v1 is frozen from today, new endpoints go to v2 only."]], "evidence": 1 },
+    { "atMinute": 62, "id": "joke-teleport", "kind": "trap", "trapKind": "any", "match": ["teleport"], "reason": "A joke, not content.",
+      "lines": [["Dev", "If we really want to cut latency we should just teleport the packets."], ["Chloe", "Ha, put it on the roadmap for next century."]] },
+    { "atMinute": 69, "id": "task-vendor-comparison", "kind": "actionItem", "match": ["vendor"], "owner": "Eli", "dueDate": null,
+      "lines": [["Ana", "We should compare the two analytics vendors before renewing."], ["Eli", "I'll prepare the vendor comparison."]], "evidence": 1 },
+    { "atMinute": 77, "id": "date-board-meeting", "kind": "date", "match": ["board meeting"], "dueDate": "December 4th", "dueResolved": "2026-12-04",
+      "lines": [["Ana", "Reminder: the board meeting is on December 4th, so numbers need to be final before then."]], "evidence": 0 },
+    { "atMinute": 84, "id": "task-offsite-venue", "kind": "actionItem", "match": ["venue"], "owner": "Ana", "dueDate": "November 30th", "dueResolved": "2026-11-30",
+      "lines": [["Chloe", "Is the offsite happening?"], ["Ana", "Yes, I'll book the offsite venue by November 30th."]], "evidence": 1 }
+  ],
+  "traps": [
+    { "id": "smalltalk-ski", "kind": "any", "match": ["ski trip"], "reason": "Small talk before the agenda." },
+    { "id": "smalltalk-hallway", "kind": "any", "match": ["hallway"], "reason": "Small talk before the agenda." }
+  ]
+}

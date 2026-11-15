@@ -27,7 +27,18 @@
     "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
     "test:web": "npm --prefix frontend test",
     "bench:asr": "node scripts/benchmark-transcription.mjs",
-    "test:desktop": "node desktop-recorder/run-tests.mjs"
+    "test:desktop": "node desktop-recorder/run-tests.mjs",
+    "setup:eval": "cd eval && npm install",
+    "eval": "npm --prefix eval run eval --",
+    "eval:check": "npm --prefix eval run check --",
+    "eval:accept": "npm --prefix eval run accept --",
+    "eval:import-corrections": "npm --prefix eval run import-corrections --",
+    "eval:fetch-ami": "node scripts/fetch-ami.mjs",
+    "eval:new-case": "node scripts/eval-new-case.mjs",
+    "eval:gen-long": "node scripts/eval-gen-long.mjs",
+    "test:eval": "npm --prefix eval test",
+    "setup:e2e": "cd e2e && npm install && npx playwright install chromium --only-shell",
+    "test:e2e": "npm --prefix e2e test"
   },
   "devDependencies": {
     "concurrently": "^10.0.7"

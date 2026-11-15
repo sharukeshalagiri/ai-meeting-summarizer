@@ -1,0 +1,100 @@
+{
+  "transcript": "one-on-one.json",
+  "mode": "one-on-one",
+  "description": "Manager (Grace) and report (Sam) 1:1: feedback, one decision (Sam moves to the platform team in January), two commitments with deadlines, one open question about the promotion cycle, a parked idea, and marathon small talk.",
+  "me": "Sam",
+  "mustAppear": [
+    {
+      "id": "feedback-incident-writeup",
+      "kind": "feedback",
+      "match": [
+        "write-up"
+      ],
+      "evidenceStartMs": [
+        12600
+      ]
+    },
+    {
+      "id": "feedback-design-reviews",
+      "kind": "feedback",
+      "match": [
+        "design review"
+      ],
+      "evidenceStartMs": [
+        24000
+      ]
+    },
+    {
+      "id": "decision-platform-team",
+      "kind": "decision",
+      "match": [
+        "platform team"
+      ],
+      "evidenceStartMs": [
+        38400
+      ]
+    },
+    {
+      "id": "task-caching-design-doc",
+      "kind": "actionItem",
+      "match": [
+        "design doc"
+      ],
+      "owner": "Sam",
+      "dueDate": "next Monday",
+      "dueResolved": "2026-11-16",
+      "evidenceStartMs": [
+        59800
+      ]
+    },
+    {
+      "id": "task-conference-budget",
+      "kind": "actionItem",
+      "match": [
+        "conference budget"
+      ],
+      "owner": "Grace",
+      "dueDate": "Friday",
+      "dueResolved": "2026-11-13",
+      "evidenceStartMs": [
+        63600
+      ]
+    },
+    {
+      "id": "question-promotion-cycle",
+      "kind": "openQuestion",
+      "match": [
+        "promotion"
+      ],
+      "evidenceStartMs": [
+        68600
+      ]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-marathon",
+      "kind": "any",
+      "match": [
+        "marathon"
+      ],
+      "reason": "Weekend small talk."
+    },
+    {
+      "id": "smalltalk-knees",
+      "kind": "any",
+      "match": [
+        "knees"
+      ],
+      "reason": "Weekend small talk."
+    },
+    {
+      "id": "parked-kotlin",
+      "kind": "actionItem",
+      "match": [
+        "kotlin"
+      ],
+      "reason": "Explicitly parked; not a task."
+    }
+  ]
+}

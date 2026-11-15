@@ -1,0 +1,112 @@
+{
+  "transcript": "interview-candidate.json",
+  "mode": "interview",
+  "description": "Interview recorded by the candidate (Alex): three questions, one Alex struggled with (consistent hashing), a portfolio link Alex promised, the interviewer's answer deadline and the final-round date, with weather and coffee small talk.",
+  "me": "Alex",
+  "mustAppear": [
+    {
+      "id": "qa-project",
+      "kind": "qa",
+      "match": [
+        "project"
+      ],
+      "evidenceStartMs": [
+        19200
+      ]
+    },
+    {
+      "id": "qa-cache-keys",
+      "kind": "qa",
+      "match": [
+        "cache"
+      ],
+      "evidenceStartMs": [
+        42600
+      ]
+    },
+    {
+      "id": "qa-small-team",
+      "kind": "qa",
+      "match": [
+        "small team"
+      ],
+      "evidenceStartMs": [
+        65400
+      ]
+    },
+    {
+      "id": "struggled-consistent-hashing",
+      "kind": "struggledWith",
+      "match": [
+        "consistent hashing"
+      ],
+      "evidenceStartMs": [
+        60000
+      ]
+    },
+    {
+      "id": "task-portfolio-link",
+      "kind": "actionItem",
+      "match": [
+        "link"
+      ],
+      "owner": "Alex",
+      "dueDate": "tomorrow",
+      "dueResolved": "2026-11-10",
+      "evidenceStartMs": [
+        83800
+      ]
+    },
+    {
+      "id": "task-answer-wednesday",
+      "kind": "actionItem",
+      "match": [
+        "answer"
+      ],
+      "owner": "Morgan",
+      "dueDate": "Wednesday",
+      "dueResolved": "2026-11-11",
+      "evidenceStartMs": [
+        87600
+      ]
+    },
+    {
+      "id": "date-final-round",
+      "kind": "date",
+      "match": [
+        "final round"
+      ],
+      "dueDate": "November 18th",
+      "dueResolved": "2026-11-18",
+      "evidenceStartMs": [
+        91000
+      ]
+    }
+  ],
+  "mustNotAppear": [
+    {
+      "id": "smalltalk-weather",
+      "kind": "any",
+      "match": [
+        "weather"
+      ],
+      "reason": "Small talk about the weather."
+    },
+    {
+      "id": "smalltalk-coffee",
+      "kind": "any",
+      "match": [
+        "coffee"
+      ],
+      "reason": "The interviewer grabbing a coffee."
+    },
+    {
+      "id": "not-a-task-modulo",
+      "kind": "actionItem",
+      "match": [
+        "modulo"
+      ],
+      "reason": "A wrong answer, not a task."
+    }
+  ]
+}

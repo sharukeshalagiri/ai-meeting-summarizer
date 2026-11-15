@@ -26,6 +26,7 @@
       "kind": "homework",
       "match": ["hash table"],
       "dueDate": "next Tuesday",
+      "dueResolved": "2026-11-17",
       "evidenceStartMs": [129800, 139200]
     }
   ],

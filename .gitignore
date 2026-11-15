@@ -110,3 +110,15 @@ coverage/
 # Claude Code worktrees (claude --worktree <track>)
 # ================================
 .claude/worktrees/
+
+
+# ================================
+# Evaluation (w2-eval): downloaded corpora, generated cases, raw runs and
+# own recordings never enter the repo. Reports and baseline.json do.
+# ================================
+eval/data/
+eval/.generated/
+eval/runs/
+eval/cases/own/
+e2e/test-results/
+e2e/playwright-report/

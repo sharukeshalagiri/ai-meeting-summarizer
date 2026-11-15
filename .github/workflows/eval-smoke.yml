@@ -1,0 +1,79 @@
+name: Eval smoke
+
+# A 2-case evaluation (project-meeting, no-tasks) with REAL Gemini calls:
+# about 6 requests, hard-capped at 8. It runs only when the summary
+# pipeline changes on main, or by hand. Never on pull requests.
+#
+# It needs the repository secret GEMINI_API_KEY. Without it the job
+# passes with a notice instead of failing (adding the secret is the
+# repo owner's decision).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/src/prompts/**
+      - backend/src/services/summary*
+      - backend/src/services/w1-sum*
+      - backend/src/lib/dates/**
+      - backend/src/types/summary.ts
+      - fixtures/transcripts/project-meeting*
+      - fixtures/transcripts/no-tasks*
+  workflow_dispatch:
+
+concurrency:
+  group: eval-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: eval smoke (2 cases, real Gemini)
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # lib/env.ts requires it at import; the eval never touches a database.
+      DATABASE_URL: postgresql://unused:unused@localhost:5432/unused
+      LOG_LEVEL: warn
+    steps:
+      - name: Check for the Gemini key
+        id: key
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::notice title=Eval smoke skipped::No GEMINI_API_KEY repository secret is set, so no real evaluation ran."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            eval/package-lock.json
+      - if: steps.key.outputs.present == 'true'
+        run: npm ci
+        working-directory: backend
+      - if: steps.key.outputs.present == 'true'
+        run: npm ci
+        working-directory: eval
+      - name: Run the smoke evaluation
+        if: steps.key.outputs.present == 'true'
+        run: npm run eval -- --cases smoke --cap 8 --no-judge --retry-wait 30 --title smoke
+        working-directory: eval
+      - name: Report
+        if: steps.key.outputs.present == 'true' && always()
+        run: |
+          if [ -f eval/reports/smoke.md ]; then cat eval/reports/smoke.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.present == 'true' && always()
+        with:
+          name: eval-smoke-report
+          path: eval/reports/
+          retention-days: 30

@@ -1,0 +1,6 @@
+{
+  "status": "placeholder",
+  "note": "No real run accepted yet. The first full run (28 Gemini requests, cap 30) happens after this PR merges, on branch w2-eval/baseline, followed by npm run eval:accept.",
+  "metrics": {},
+  "tolerances": {}
+}
