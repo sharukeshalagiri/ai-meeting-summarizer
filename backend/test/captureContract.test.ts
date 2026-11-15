@@ -435,7 +435,10 @@ describe("late pass survives a restart during the wait (live-late job)", () => {
       expect(fakes.store.finalPasses).toHaveLength(1);
 
       // ... and the next one, on the same store, runs the waiting job.
-      const second = new MemoryQueue({ store });
+      // Its clock starts where the wait ends (the old queue's clock may be
+      // ahead of the faked Date after earlier tests).
+      const dueAt = Math.max(...store.jobs.map((job) => job.startAfter));
+      const second = new MemoryQueue({ store, now: () => dueAt });
       for (const definition of QUEUE_DEFINITIONS) await second.createQueue(definition);
       await second.work("live-late", late);
       await vi.advanceTimersByTimeAsync(1000);
