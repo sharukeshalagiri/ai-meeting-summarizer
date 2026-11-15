@@ -124,8 +124,8 @@ cd ai-meeting-summarizer
 # 4. Secrets: server-only file, ignored by git (**/.env)
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
-nano deploy/.env        # DOMAIN, POSTGRES_PASSWORD, GEMINI_API_KEY, DEVICE_TOKEN
-#   POSTGRES_PASSWORD / DEVICE_TOKEN:  openssl rand -hex 32
+nano deploy/.env        # DOMAIN, POSTGRES_PASSWORD, GEMINI_API_KEY, SESSION_SECRET
+#   POSTGRES_PASSWORD / SESSION_SECRET:  openssl rand -hex 32
 
 # 5. Build, migrate, start (migrate runs automatically before backend)
 docker compose -f docker-compose.prod.yml --env-file deploy/.env up -d --build
@@ -139,12 +139,26 @@ docker compose -f docker-compose.prod.yml --env-file deploy/.env logs migrate
 The first build takes about 5-10 minutes. The first transcription also
 downloads the Whisper model.
 
+Create your account (sign-up is off in production). The password is
+asked for at a hidden prompt:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file deploy/.env exec backend \
+  node dist/lib/auth/cli.js --email you@example.com --name "Your Name"
+```
+
+Run the same command without `--name` to reset a password; it also
+signs that account out everywhere.
+
 Then point the recorders at the server:
 
+- Sign in at `https://<DOMAIN>`, open **Devices** and create one token
+  per recorder (it is shown once).
 - **Chrome extension** → Settings: backend URL `https://<DOMAIN>/api`,
-  device token = `DEVICE_TOKEN`.
-- **Desktop recorder** → Settings: the same API URL and token, and web app URL
+  device token = the extension's token.
+- **Desktop recorder** → Settings: the same API URL, its own token, and web app URL
   `https://<DOMAIN>`.
+- Revoking a token on the Devices page stops that recorder at once.
 
 ### Update and roll back
 
@@ -174,11 +188,15 @@ Keep the backups off the server. Recordings are personal data.
 
 ### Hardening checklist
 
-- `DEVICE_TOKEN` is required, and the backend refuses to boot without it
-  in production. Until auth exists, anyone with the URL can read meetings
-  through the web app, so share the URL carefully.
+- `SESSION_SECRET` is required, and the backend refuses to boot without it
+  in production. Every page and API route needs a signed-in account
+  (httpOnly, Secure, SameSite=Lax session cookie), and every query is
+  scoped to that account. The shared `DEVICE_TOKEN` is gone: recorders
+  use per-user tokens from the Devices page.
+- Sign-up is off in production (`AUTH_ALLOW_SIGNUP=false`); accounts are
+  created with the CLI above.
 - Postgres, backend and ai-service publish no ports. Only Caddy is exposed.
-- Don't set `VITE_DEVICE_TOKEN` for a public build, because it would ship in the JS bundle.
+- `VITE_DEVICE_TOKEN` is no longer used; leave it unset.
 - `sudo apt install unattended-upgrades` for OS security patches.
 
 ## Testing the release workflow
