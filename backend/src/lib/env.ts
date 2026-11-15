@@ -91,6 +91,30 @@ const transcriptionProvider = (): "local" | "deepgram" => {
   return value;
 };
 
+/**
+ * Speaker diarization (w2-spk): voice (ai-service speaker embeddings,
+ * default), text (Gemini infers turns), or deepgram (paid per minute,
+ * needs DEEPGRAM_API_KEY). Voice falls back to text when unavailable.
+ */
+const diarizationProvider = (): "voice" | "text" | "deepgram" => {
+  const value = optional("DIARIZATION_PROVIDER", "voice").trim().toLowerCase();
+
+  if (value !== "voice" && value !== "text" && value !== "deepgram") {
+    throw new Error(
+      `DIARIZATION_PROVIDER must be "voice", "text" or "deepgram", got "${value}".`
+    );
+  }
+
+  if (value === "deepgram" && !process.env.DEEPGRAM_API_KEY?.trim()) {
+    throw new Error(
+      "Missing required environment variable: DEEPGRAM_API_KEY. " +
+        "It is required when DIARIZATION_PROVIDER=deepgram."
+    );
+  }
+
+  return value;
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   isProduction,
@@ -153,6 +177,11 @@ export const env = {
   deepgramApiKey: process.env.DEEPGRAM_API_KEY?.trim() || null,
   /** nova-2 takes `keywords`; nova-3 models take `keyterm` instead. */
   deepgramModel: optional("DEEPGRAM_MODEL", "nova-2"),
+
+  /** See diarizationProvider() above. */
+  diarizationProvider: diarizationProvider(),
+  /** Label for the user's own (mic channel) segments until renamed. */
+  meDisplayName: optional("ME_DISPLAY_NAME", "You").trim().slice(0, 60) || "You",
 } as const;
 
 export type Env = typeof env;
