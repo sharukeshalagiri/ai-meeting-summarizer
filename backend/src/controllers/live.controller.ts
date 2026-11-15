@@ -14,6 +14,7 @@ import {
 } from "../types/capture";
 import { BadRequest } from "../types/errors";
 import { asyncHandler } from "../utils/asyncHandler";
+import { currentUserId } from "../middleware/auth.middleware";
 import {
   optionalString,
   requireParam,
@@ -122,7 +123,8 @@ export const startLiveSession = asyncHandler(
         maxLength: 200,
       }),
       platform: readPlatform(req.body?.platform),
-      userId: optionalString(req.body?.userId),
+      // The device token's account (or the signed-in user); never the body.
+      userId: currentUserId(req),
       source: readEnum<CaptureSource>(
         req.body?.source,
         CAPTURE_SOURCES,

@@ -5,8 +5,9 @@ import { prisma } from "../lib/prisma";
 export const findByMeetingId = (meetingId: string) =>
   prisma.transcript.findUnique({ where: { meetingId } });
 
-export const findAll = () =>
+export const findAll = (userId: string) =>
   prisma.transcript.findMany({
+    where: { meeting: { userId } },
     include: { meeting: true },
     orderBy: { createdAt: "desc" },
   });

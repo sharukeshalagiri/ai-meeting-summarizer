@@ -1,17 +1,53 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { AuthProvider } from "../lib/auth/AuthProvider";
+import { useAuth } from "../lib/auth/authContext";
+import { Skeleton } from "./Skeleton";
+import "./account/account.css";
 
 const NAV = [
   { to: "/", label: "Meetings", end: true },
   { to: "/analytics", label: "Analytics", end: false },
   { to: "/tasks", label: "Tasks", end: false },
+  { to: "/prep", label: "Prep", end: false },
   { to: "/ask", label: "Ask AI", end: false },
 ];
 
+/** Pages reachable without an account. */
+const PUBLIC_PATHS = new Set(["/login"]);
+
 /**
  * App shell: one header and nav for every page, so navigation does not
- * shift between routes.
+ * shift between routes. It is also the sign-in gate (w4-acct): every
+ * page except /login needs an account, and an expired session sends
+ * the user to /login, then back where they were.
  */
-function Layout() {
+function Shell() {
+  const { account, signOut } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isPublic = PUBLIC_PATHS.has(location.pathname);
+
+  if (account === undefined) {
+    return (
+      <main id="main" className="page">
+        <Skeleton rows={2} />
+      </main>
+    );
+  }
+
+  if (!account && !isPublic) {
+    const next = `${location.pathname}${location.search}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
+  }
+
+  if (isPublic) {
+    return (
+      <main id="main">
+        <Outlet />
+      </main>
+    );
+  }
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main">
@@ -55,6 +91,24 @@ function Layout() {
                 Upload
               </button>
             </NavLink>
+
+            <details className="account-menu">
+              <summary className="nav-link" aria-label="Account">
+                {account?.displayName || account?.name}
+              </summary>
+              <div className="account-menu-panel card">
+                <p className="muted tiny">{account?.email}</p>
+                <NavLink to="/settings" className="nav-link">Settings</NavLink>
+                <NavLink to="/devices" className="nav-link">Devices</NavLink>
+                <button
+                  type="button"
+                  className="secondary sm"
+                  onClick={() => void signOut().then(() => navigate("/login"))}
+                >
+                  Sign out
+                </button>
+              </div>
+            </details>
           </div>
         </div>
       </header>
@@ -63,6 +117,14 @@ function Layout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+function Layout() {
+  return (
+    <AuthProvider>
+      <Shell />
+    </AuthProvider>
   );
 }
 

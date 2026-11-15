@@ -6,6 +6,7 @@ import * as transcriptService from "../services/transcript.service";
 import { sendSuccess } from "../types/api";
 import { isActiveStage, MeetingStatus } from "../types/meeting";
 import { asyncHandler } from "../utils/asyncHandler";
+import { currentUserId } from "../middleware/auth.middleware";
 import {
   optionalString,
   requireParam,
@@ -22,7 +23,8 @@ export const createMeeting = asyncHandler(
     const meeting = await meetingService.createMeeting({
       title: requireString(req.body?.title, "title", { maxLength: 200 }),
       description: optionalString(req.body?.description),
-      userId: optionalString(req.body?.userId),
+      // Always the signed-in user; a userId in the body is ignored.
+      userId: currentUserId(req),
     });
 
     return sendSuccess(res, meeting, "Meeting created", 201);
@@ -30,8 +32,8 @@ export const createMeeting = asyncHandler(
 );
 
 export const getMeetings = asyncHandler(
-  async (_req: Request, res: Response) => {
-    const meetings = await meetingService.listMeetings();
+  async (req: Request, res: Response) => {
+    const meetings = await meetingService.listMeetings(currentUserId(req));
 
     return sendSuccess(res, meetings, "Meetings fetched");
   }
@@ -49,8 +51,9 @@ export const getMeetingById = asyncHandler(
 
 /**
  * Streams the stored recording. res.sendFile handles HTTP Range (206
- * partial content), which the <audio> element needs to seek.
- * TODO(auth): check the meeting belongs to the requester.
+ * partial content), which the <audio> element needs to seek. The
+ * /meetings/:id guard has checked the owner; <audio> sends the session
+ * cookie by itself.
  */
 export const getMeetingAudio = asyncHandler(
   async (req: Request, res: Response) => {
@@ -159,8 +162,9 @@ const isSettled = (row: { status: string; processingStage: string | null }) =>
  * Sends the current state at once, then every change; once the meeting
  * is settled it sends `event: end` and closes, so the browser's
  * EventSource does not reconnect. Replaces the page's 5 s polling.
- * TODO(auth): EventSource cannot send headers; w4-acct scopes this by
- * cookie or a short-lived token in the query string.
+ * EventSource cannot send headers, so this is authenticated by the
+ * session cookie (EventSource withCredentials) and owner-checked by the
+ * /meetings/:id guard like every other meeting route.
  */
 export const getMeetingEvents = asyncHandler(
   async (req: Request, res: Response) => {

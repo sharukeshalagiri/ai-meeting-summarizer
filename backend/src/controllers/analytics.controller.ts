@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import * as analyticsService from "../services/analytics.service";
 import { sendSuccess } from "../types/api";
 import { asyncHandler } from "../utils/asyncHandler";
+import { currentUserId } from "../middleware/auth.middleware";
 
 /** Bounded so a hand-edited query string cannot ask for years of data. */
 const MAX_DAYS = 365;
@@ -16,7 +17,7 @@ export const getOverview = asyncHandler(
         ? Math.min(Math.floor(requested), MAX_DAYS)
         : DEFAULT_DAYS;
 
-    const overview = await analyticsService.getOverview(days);
+    const overview = await analyticsService.getOverview(currentUserId(req), days);
 
     return sendSuccess(res, overview, "Analytics fetched");
   }

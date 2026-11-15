@@ -9,6 +9,10 @@ import MeetingDetails from "./pages/MeetingDetails";
 import NewMeeting from "./pages/NewMeeting";
 import NotFound from "./pages/NotFound";
 import Tasks from "./pages/Tasks";
+import Devices from "./pages/Devices";
+import Login from "./pages/Login";
+import Prep from "./pages/Prep";
+import Settings from "./pages/Settings";
 
 function App() {
   return (
@@ -22,6 +26,11 @@ function App() {
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/ask" element={<Ask />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/devices" element={<Devices />} />
+          <Route path="/prep" element={<Prep />} />
+          <Route path="/prep/:seriesId" element={<Prep />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

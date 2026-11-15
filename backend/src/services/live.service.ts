@@ -46,7 +46,8 @@ const log = logger.child({ module: "live.service" });
 export const startSession = async (input: {
   title: string;
   platform: string | null;
-  userId?: string | null;
+  /** The signed-in user or the device token's account (w4-acct). */
+  userId: string;
   /** Capture-contract fields; absent for the legacy web page. */
   source?: CaptureSource | null;
   mode?: MeetingMode | null;
@@ -55,7 +56,7 @@ export const startSession = async (input: {
   const created = await meetingService.createMeeting({
     title: input.title,
     description: null,
-    userId: input.userId ?? null,
+    userId: input.userId,
     source: "LIVE",
     platform: input.platform,
     mode: input.mode ?? undefined,
@@ -152,10 +153,12 @@ export const tailWords = (
  * chunk's tail words for edge de-dup.
  */
 const transcribeOptionsFor = (
-  session: { hints?: string[] | null; roster?: string[] | null },
+  session: { hints?: string[] | null; roster?: string[] | null; meetingId?: string },
   channelLayout: ChannelLayout,
   previousWords: PreviousWords
 ): TranscribeOptions => ({
+  // w4-acct: the owner's provider and glossary apply to every chunk.
+  ...(session.meetingId ? { meetingId: session.meetingId } : {}),
   channelLayout,
   hints: session.hints ?? [],
   roster: session.roster ?? [],

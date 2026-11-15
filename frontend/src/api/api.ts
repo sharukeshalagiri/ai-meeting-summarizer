@@ -10,16 +10,31 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
 
 /**
- * Device token for /api/live (see backend deviceAuth.middleware.ts).
- * Optional: a development backend without DEVICE_TOKEN accepts requests
- * without it. Note that a VITE_ variable is visible in the built bundle.
+ * Signed-in requests use the session cookie (w4-acct), so every request
+ * sends credentials. In development the frontend and backend are on
+ * different localhost ports: the same site, so the SameSite=Lax cookie
+ * is sent, but CORS needs withCredentials. Recorders authenticate with
+ * per-user device tokens instead (Devices page); the shared
+ * VITE_DEVICE_TOKEN is no longer used.
  */
-const DEVICE_TOKEN = import.meta.env.VITE_DEVICE_TOKEN as string | undefined;
-
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  headers: DEVICE_TOKEN ? { Authorization: `Bearer ${DEVICE_TOKEN}` } : {},
+  withCredentials: true,
 });
+
+/** Fired when the session is missing or expired; Layout sends the user to /login. */
+export const AUTH_REQUIRED_EVENT = "ams:auth-required";
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const url = String(error?.config?.url ?? "");
+    if (axios.isAxiosError(error) && error.response?.status === 401 && !url.startsWith("/auth/")) {
+      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+    }
+    return Promise.reject(error);
+  }
+);
 
 /**
  * Turns any failure into a sentence worth showing a user. The backend
@@ -90,6 +105,15 @@ export const patchData = async <T>(
   body?: unknown
 ): Promise<T> => {
   const res = await api.patch<ApiResponse<T>>(url, body);
+
+  return unwrap(res.data);
+};
+
+export const putData = async <T>(
+  url: string,
+  body?: unknown
+): Promise<T> => {
+  const res = await api.put<ApiResponse<T>>(url, body);
 
   return unwrap(res.data);
 };

@@ -22,7 +22,15 @@ x-backend-env: &backend-env
   PORT: "5000"
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_meeting_summarizer}
   GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY}
-  DEVICE_TOKEN: ${DEVICE_TOKEN:?set DEVICE_TOKEN}
+  # w4-acct: login sessions; recorders use per-user tokens (Devices page).
+  SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-false}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_SECURE: ${SMTP_SECURE:-false}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
   GEMINI_CLEAN_MODEL: ${GEMINI_CLEAN_MODEL:-gemini-flash-lite-latest}

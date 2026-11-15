@@ -118,7 +118,8 @@ const buildDailySeries = (
   return [...buckets.values()];
 };
 
-export const getOverview = async (days = 30) => {
+/** One user's analytics: every aggregate below is scoped by owner. */
+export const getOverview = async (userId: string, days = 30) => {
   const since = startOfDay(new Date());
 
   since.setDate(since.getDate() - (days - 1));
@@ -133,14 +134,14 @@ export const getOverview = async (days = 30) => {
     totalActions,
     byOwner,
   ] = await Promise.all([
-    meetingRepo.stats(),
-    meetingRepo.countByStatus(),
-    meetingRepo.countBySource(),
-    meetingRepo.findSince(since),
-    meetingRepo.findSummaryData(),
-    actionItemRepo.countByStatus(),
-    actionItemRepo.countAll(),
-    actionItemRepo.countOpenByOwner(),
+    meetingRepo.stats(userId),
+    meetingRepo.countByStatus(userId),
+    meetingRepo.countBySource(userId),
+    meetingRepo.findSince(userId, since),
+    meetingRepo.findSummaryData(userId),
+    actionItemRepo.countByStatus(userId),
+    actionItemRepo.countAll(userId),
+    actionItemRepo.countOpenByOwner(userId),
   ]);
 
   const parsed = summaries

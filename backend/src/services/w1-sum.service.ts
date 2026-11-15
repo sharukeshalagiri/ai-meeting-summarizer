@@ -22,6 +22,13 @@ import {
   type SummaryV2,
 } from "../types/summary";
 import { runSummaryPipeline, type NoiseLabelUpdate } from "./summary.service";
+import { settingsForMeeting } from "./account/context";
+import {
+  computeSinceLastTime,
+  readSinceLastTime,
+  type SinceLastTime,
+  type SinceSegment,
+} from "./series/sinceLastTime";
 
 /**
  * Meeting-level operations for summary intelligence (track w1-sum):
@@ -34,6 +41,49 @@ import { runSummaryPipeline, type NoiseLabelUpdate } from "./summary.service";
  */
 
 const log = logger.child({ module: "w1-sum.service" });
+
+/**
+ * w4-acct: compares the earlier open items of the meeting's series with
+ * this transcript (services/series/sinceLastTime.ts). Skipped without a
+ * series. A failure is logged and leaves the summary without the
+ * section: it must never cost the user their summary. Suggestions the
+ * user dismissed on a previous run stay dismissed.
+ */
+const sinceLastTimeFor = async (
+  meeting: {
+    id: string;
+    userId: string;
+    seriesId?: string | null;
+    createdAt: Date;
+    summary?: { data: Prisma.JsonValue } | null;
+  },
+  segments: SinceSegment[]
+): Promise<SinceLastTime | null> => {
+  if (!meeting.seriesId) return null;
+
+  try {
+    const result = await computeSinceLastTime(
+      { id: meeting.id, userId: meeting.userId, seriesId: meeting.seriesId, createdAt: meeting.createdAt },
+      segments
+    );
+    if (!result) return null;
+
+    const previous = readSinceLastTime(asRecord(meeting.summary?.data).sinceLastTime);
+    const dismissed = new Set(
+      previous?.items.filter((item) => item.resolution === "dismissed").map((item) => item.actionItemId)
+    );
+
+    return {
+      ...result,
+      items: result.items.map((item) =>
+        dismissed.has(item.actionItemId) ? { ...item, resolution: "dismissed" as const } : item
+      ),
+    };
+  } catch (error) {
+    log.warn("Since last time skipped", { meetingId: meeting.id, reason: String(error) });
+    return null;
+  }
+};
 
 export const CORRECTION_KIND = {
   MODE: "MEETING_MODE",
@@ -336,7 +386,8 @@ export const resummarize = async (
     {
       modeSetting,
       meetingStart: meeting.startedAt ?? meeting.createdAt,
-      timezone: options.timezone ?? null,
+      // w4-acct: the owner's Settings timezone unless the request named one.
+      timezone: options.timezone ?? (await settingsForMeeting(meetingId))?.timezone ?? null,
       // CLEAN labels are stored by default so the next run skips
       // segments already classified.
       writeNoiseLabels:
@@ -349,10 +400,17 @@ export const resummarize = async (
 
   // `pipeline` records which summarizer produced Summary.data (the
   // background runner falls back to "legacy"); no schema change needed.
+  // w4-acct: "Since last time" for a meeting in a series (best effort).
+  const sinceLastTime = await sinceLastTimeFor(meeting, segments);
+
   const saved = await summaryRepo.upsert(
     meetingId,
     markdown,
-    { ...toJsonValueV2(summary), pipeline: "v2" },
+    {
+      ...toJsonValueV2(summary),
+      pipeline: "v2",
+      ...(sinceLastTime ? { sinceLastTime: sinceLastTime as unknown as Prisma.InputJsonValue } : {}),
+    },
     summary.sentiment.overall
   );
 

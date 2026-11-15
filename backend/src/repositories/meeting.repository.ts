@@ -28,8 +28,10 @@ export const create = (data: {
   mode?: string;
 }) => prisma.meeting.create({ data });
 
-export const findAll = (): Promise<MeetingWithRelations[]> =>
+/** One user's meetings (every list is scoped by owner). */
+export const findAll = (userId: string): Promise<MeetingWithRelations[]> =>
   prisma.meeting.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
     include: withRelations,
   });
@@ -141,29 +143,32 @@ export const remove = (id: string) =>
  * against Meeting goes through one layer, and so the aggregation runs
  * in PostgreSQL instead of loading every row into Node.
  */
-export const stats = () =>
+export const stats = (userId: string) =>
   prisma.meeting.aggregate({
+    where: { userId },
     _count: { _all: true },
     _sum: { durationSec: true },
     _avg: { durationSec: true },
   });
 
-export const countByStatus = () =>
+export const countByStatus = (userId: string) =>
   prisma.meeting.groupBy({
     by: ["status"],
+    where: { userId },
     _count: { _all: true },
   });
 
-export const countBySource = () =>
+export const countBySource = (userId: string) =>
   prisma.meeting.groupBy({
     by: ["source"],
+    where: { userId },
     _count: { _all: true },
   });
 
 /** Meetings created since a date, for the frequency chart. */
-export const findSince = (since: Date) =>
+export const findSince = (userId: string, since: Date) =>
   prisma.meeting.findMany({
-    where: { createdAt: { gte: since } },
+    where: { userId, createdAt: { gte: since } },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
@@ -177,9 +182,9 @@ export const findSince = (since: Date) =>
  * Summaries with their structured payload, for keyword, topic, and
  * sentiment trends.
  */
-export const findSummaryData = (since?: Date) =>
+export const findSummaryData = (userId: string, since?: Date) =>
   prisma.summary.findMany({
-    where: since ? { meeting: { createdAt: { gte: since } } } : {},
+    where: { meeting: { userId, ...(since ? { createdAt: { gte: since } } : {}) } },
     orderBy: { createdAt: "asc" },
     select: {
       data: true,

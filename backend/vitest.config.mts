@@ -10,6 +10,8 @@ export default defineConfig({
     // next to the code they cover (parallel tracks add those).
     include: ["test/**/*.test.ts", "src/**/*.test.ts"],
     environment: "node",
+    // w4-acct: default signed-in user and ownership for route tests.
+    setupFiles: ["test/setup.auth.ts"],
     // lib/env.ts validates configuration at import time. Unit tests never
     // touch the database or Gemini, so placeholders are enough to let
     // modules load. Real values from a developer's .env are overridden so

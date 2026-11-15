@@ -1,17 +1,13 @@
-import { logger } from "../lib/logger";
 import * as userRepo from "../repositories/user.repository";
+import { NotFound } from "../types/errors";
 
-const log = logger.child({ module: "user.service" });
-
-export const listUsers = () => userRepo.findAll();
-
-export const createUser = async (input: {
-  name: string;
-  email: string;
-}) => {
-  const user = await userRepo.create(input);
-
-  log.info("User created", { userId: user.id });
-
-  return user;
+/**
+ * GET /users answers with the signed-in user only (w4-acct): there is
+ * no endpoint that lists other accounts. Accounts are created by
+ * sign-up (POST /auth/signup) or the CLI (scripts/set-password.ts).
+ */
+export const listUsers = async (userId: string) => {
+  const user = await userRepo.findById(userId);
+  if (!user) throw NotFound("Account not found");
+  return [user];
 };

@@ -5,6 +5,7 @@ import {
   setRoster,
   startLiveSession,
 } from "../controllers/live.controller";
+import { requireLiveSessionAccess } from "../middleware/auth.middleware";
 import { requireDeviceToken } from "../middleware/deviceAuth.middleware";
 import {
   handleUploadErrors,
@@ -20,6 +21,8 @@ const router = Router();
 
 // One auth check for every recorder; see deviceAuth.middleware.ts.
 router.use(requireDeviceToken);
+// A session of another account is a 404 (before multer stores anything).
+router.use("/sessions/:id", requireLiveSessionAccess);
 
 router.post("/sessions", startLiveSession);
 

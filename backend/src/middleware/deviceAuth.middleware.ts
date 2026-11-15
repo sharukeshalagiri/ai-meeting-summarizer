@@ -1,59 +1,55 @@
-import crypto from "crypto";
 import { NextFunction, Request, Response } from "express";
-import { env } from "../lib/env";
+import { resolveUser } from "../lib/auth/currentUser";
 import { logger } from "../lib/logger";
+import { authenticateDevice } from "../services/account/devices.service";
 import { AppError } from "../types/errors";
 
 const log = logger.child({ module: "deviceAuth" });
 
 /**
- * The single place recorders are authenticated.
+ * The single place recorders are authenticated (/api/live).
  *
- * Every recorder (extension, desktop app, bot, the web page) sends
- * `Authorization: Bearer <DEVICE_TOKEN>`. When DEVICE_TOKEN is unset,
- * which env.ts only allows outside production, requests pass with a
- * one-time warning so local development needs no setup.
+ * - With `Authorization: Bearer <token>` (extension, desktop app, bot):
+ *   the token must be a live per-user device token from the Devices
+ *   page. The capture then belongs to that token's account. A token
+ *   that is present but unknown or revoked is always a 401, even if the
+ *   request also carries a session cookie: an explicit credential that
+ *   fails must never fall back to another one.
+ * - Without one (the web app's Live page): the signed-in session.
  *
- * `token` is injectable for tests; production code uses env.
+ * The shared DEVICE_TOKEN of earlier versions is no longer accepted.
+ * Recorders keep their settings as they are: they already send their
+ * token as a Bearer header; only its value changes.
+ *
+ * `authenticate` is injectable for tests.
  */
-export const createDeviceAuth = (token: string | null = env.deviceToken) => {
-  let warned = false;
-
-  const expected = token ? Buffer.from(token) : null;
-
+export const createDeviceAuth = (authenticate = authenticateDevice) => {
   return (req: Request, _res: Response, next: NextFunction) => {
-    if (!expected) {
-      if (!warned) {
-        warned = true;
-        log.warn(
-          "DEVICE_TOKEN is not set: /api/live accepts unauthenticated " +
-            "requests. Set it before exposing the backend."
-        );
-      }
+    const header = req.header("authorization")?.trim();
 
-      return next();
+    if (!header) {
+      return resolveUser(req)
+        ? next()
+        : next(new AppError("Missing device token. Create one on the Devices page.", 401));
     }
 
-    const header = req.header("authorization") ?? "";
-    const match = /^Bearer\s+(.+)$/i.exec(header.trim());
+    const match = /^Bearer\s+(\S+)$/i.exec(header);
 
     if (!match) {
       return next(new AppError("Missing device token.", 401));
     }
 
-    const given = Buffer.from(match[1].trim());
+    authenticate(match[1])
+      .then((user) => {
+        if (!user) {
+          log.info("Device token rejected", { path: req.path });
+          return next(new AppError("Invalid or revoked device token.", 401));
+        }
 
-    // Constant-time compare; lengths must match first or
-    // timingSafeEqual throws.
-    const valid =
-      given.length === expected.length &&
-      crypto.timingSafeEqual(given, expected);
-
-    if (!valid) {
-      return next(new AppError("Invalid device token.", 401));
-    }
-
-    return next();
+        req.user = user;
+        next();
+      })
+      .catch(next);
   };
 };
 

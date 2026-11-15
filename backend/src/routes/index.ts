@@ -9,7 +9,15 @@ import {
   getConversation,
   searchSegments,
 } from "../controllers/search.controller";
+import { authMiddleware } from "../lib/auth/session";
+import {
+  requireMeetingAccess,
+  requireUser,
+} from "../middleware/auth.middleware";
+import { accountRoutes, deviceRoutes, seriesRoutes } from "./account.routes";
+import authRoutes from "./auth.routes";
 import liveRoutes from "./live.routes";
+import meetingExtrasRoutes from "./meetingExtras.routes";
 import meetingRoutes from "./meeting.routes";
 import transcriptRoutes from "./transcript.routes";
 import userRoutes from "./user.routes";
@@ -21,13 +29,32 @@ import w3JobsHealthRoutes from "./w3-jobs-health.routes";
 /**
  * Single place where the API surface is assembled, so the full set of
  * routes can be seen at a glance.
+ *
+ * Auth (w4-acct), in this order:
+ * 1. Sessions (cookie) are read for every request.
+ * 2. Public: /auth (sign in, sign up, me) and /health.
+ * 3. /live: device auth (a per-user Bearer token, or the session).
+ * 4. Everything else requires a signed-in user, and every
+ *    /meetings/:id/... path first checks the meeting is theirs (404
+ *    otherwise), whichever router serves it. Lists are scoped by user
+ *    in their services and repositories.
  */
 const router = Router();
+
+router.use(authMiddleware());
+
+router.use("/auth", authRoutes);
+// w3-jobs: health with the queue state, and readiness (503 while it is down).
+router.use("/health", w3JobsHealthRoutes);
+
+router.use("/live", liveRoutes);
+
+router.use(requireUser);
+router.use("/meetings/:id", requireMeetingAccess);
 
 router.use("/users", userRoutes);
 router.use("/meetings", meetingRoutes);
 router.use("/transcripts", transcriptRoutes);
-router.use("/live", liveRoutes);
 
 router.get("/analytics", getOverview);
 
@@ -46,7 +73,11 @@ router.use("/meetings", w2SpkRoutes);
 
 // w3-jobs: process, retry and the progress stream under /meetings.
 router.use("/meetings", w3JobsRoutes);
-// w3-jobs: health with the queue state, and readiness (503 while it is down).
-router.use("/health", w3JobsHealthRoutes);
+
+// w4-acct: settings, devices, series + prep, and per-meeting exports.
+router.use("/account", accountRoutes);
+router.use("/devices", deviceRoutes);
+router.use("/series", seriesRoutes);
+router.use("/meetings", meetingExtrasRoutes);
 
 export default router;

@@ -76,7 +76,8 @@ export function useMeetingProgress(
     if (typeof EventSource === "undefined") {
       poll();
     } else {
-      source = new EventSource(meetingEventsUrl(meetingId));
+      // w4-acct: the stream is authenticated by the session cookie.
+      source = new EventSource(meetingEventsUrl(meetingId), { withCredentials: true });
 
       source.addEventListener("progress", (event) => {
         errors = 0;

@@ -130,10 +130,44 @@ export const mockApi = async (page: Page, options: MockOptions) => {
 
   // The page (localhost) and the mocked API (127.0.0.1:9) are different
   // origins, so the browser applies CORS to fulfilled responses too.
-  const headers = {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-    "access-control-allow-headers": "*",
+  // The app sends credentials (w4-acct: session cookie), and a
+  // credentialed response must name the origin and list headers
+  // explicitly ("*" is not honoured then).
+  const headers: Record<string, string> = {};
+  const setCors = (requestOrigin: string | undefined) => {
+    Object.assign(headers, {
+      "access-control-allow-origin": requestOrigin ?? "*",
+      "access-control-allow-credentials": "true",
+      "access-control-allow-methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
+      "access-control-allow-headers": "content-type, authorization",
+      "access-control-expose-headers": "content-disposition",
+      vary: "Origin",
+    });
+  };
+  setCors(undefined);
+
+  // w4-acct: the signed-in account (GET /auth/me) the Layout gate needs.
+  const account = {
+    id: "user-e2e",
+    name: "E2E User",
+    email: "e2e@example.com",
+    createdAt: now,
+    displayName: null,
+    timezone: null,
+    defaultMode: "AUTO",
+    transcriptionProvider: null,
+    glossary: [],
+    audioRetention: "KEEP",
+    audioRetentionDays: null,
+    meLabel: "You",
+    options: {
+      modes: ["AUTO", "GENERAL", "LECTURE", "INTERVIEW", "PROJECT", "ONE_ON_ONE"],
+      transcriptionProviders: ["local"],
+      serverTranscriptionProvider: "local",
+      retentionPolicies: ["KEEP", "AFTER_PROCESSING", "AFTER_DAYS"],
+      signupEnabled: true,
+      emailEnabled: false,
+    },
   };
 
   const ok = (route: Route, data: unknown, status = 200) =>
@@ -143,6 +177,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
 
   await page.route(`${API_BASE}/**`, async (route) => {
     const request = route.request();
+    setCors(request.headers()["origin"]);
     const url = new URL(request.url());
     const apiPath = url.pathname.replace(/^\/api/, "");
     if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers });
@@ -151,6 +186,8 @@ export const mockApi = async (page: Page, options: MockOptions) => {
     const base = `/meetings/${MEETING_ID}`;
 
     switch (key) {
+      case "GET /auth/me":
+        return ok(route, account);
       case "POST /meetings":
         return ok(route, meeting(), 201);
       case `POST ${base}/audio`:

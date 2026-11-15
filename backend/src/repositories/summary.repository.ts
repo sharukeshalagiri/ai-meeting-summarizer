@@ -24,3 +24,10 @@ export const upsert = (
     update: { content, data, sentiment },
     create: { meetingId, content, data, sentiment },
   });
+
+/**
+ * Replaces Summary.data only (w4-acct: recording a "Since last time"
+ * resolution). The markdown and sentiment are left as they are.
+ */
+export const updateData = (meetingId: string, data: Prisma.InputJsonObject) =>
+  prisma.summary.update({ where: { meetingId }, data: { data } });

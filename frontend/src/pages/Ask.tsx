@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { listSeries } from "../api/w4-acct";
+import type { SeriesSummary } from "../types/w4-acct";
 import { Link, useSearchParams } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import { getErrorMessage, postData } from "../api/api";
@@ -28,6 +30,15 @@ function Ask() {
 
   // Scoping to one meeting narrows retrieval to that transcript.
   const meetingId = params.get("meetingId");
+
+  // w4-acct: or to one series (Prep links here with ?seriesId=).
+  const [seriesId, setSeriesId] = useState<string | null>(params.get("seriesId"));
+  const [series, setSeries] = useState<SeriesSummary[]>([]);
+
+  useEffect(() => {
+    if (meetingId) return;
+    listSeries().then(setSeries, () => setSeries([]));
+  }, [meetingId]);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [question, setQuestion] = useState("");
@@ -66,6 +77,7 @@ function Ask() {
           question: trimmed,
           conversationId,
           meetingId,
+          seriesId: meetingId ? null : seriesId,
         },
         { timeout: 3 * 60 * 1000 }
       );
@@ -101,9 +113,35 @@ function Ask() {
           <p className="muted">
             {meetingId
               ? "Answers are drawn from this meeting's transcript."
-              : "Answers are drawn from every transcript, with citations."}
+              : seriesId
+                ? "Answers are drawn from this series' transcripts, with citations."
+                : "Answers are drawn from every transcript, with citations."}
           </p>
         </div>
+        {!meetingId && series.length > 0 && (
+          <div className="actions">
+            <label htmlFor="ask-series" className="sr-only">
+              Limit to a series
+            </label>
+            <select
+              id="ask-series"
+              value={seriesId ?? ""}
+              onChange={(event) => {
+                setSeriesId(event.target.value || null);
+                // A new scope starts a new thread.
+                setConversationId(null);
+                setTurns([]);
+              }}
+            >
+              <option value="">All meetings</option>
+              {series.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </header>
 
       <div className="chat-thread" ref={threadRef}>

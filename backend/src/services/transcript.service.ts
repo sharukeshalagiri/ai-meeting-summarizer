@@ -3,7 +3,8 @@ import * as transcriptRepo from "../repositories/transcript.repository";
 import { NotFound } from "../types/errors";
 import { formatTimestamp } from "../types/segment";
 
-export const listTranscripts = () => transcriptRepo.findAll();
+/** One user's transcripts (w4-acct: scoped by owner). */
+export const listTranscripts = (userId: string) => transcriptRepo.findAll(userId);
 
 export const createTranscript = (input: {
   meetingId: string;

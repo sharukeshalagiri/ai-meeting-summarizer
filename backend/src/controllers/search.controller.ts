@@ -4,6 +4,7 @@ import * as embeddingService from "../services/embedding.service";
 import * as searchService from "../services/search.service";
 import { sendSuccess } from "../types/api";
 import { asyncHandler } from "../utils/asyncHandler";
+import { currentUserId } from "../middleware/auth.middleware";
 import {
   optionalString,
   requireParam,
@@ -16,7 +17,9 @@ export const searchSegments = asyncHandler(
 
     const results = await searchService.search({
       query: requireString(req.query.q, "q", { maxLength: 500 }),
+      userId: currentUserId(req),
       meetingId: optionalString(req.query.meetingId),
+      seriesId: optionalString(req.query.seriesId),
       limit: Number.isFinite(limit) ? limit : undefined,
     });
 
@@ -36,7 +39,9 @@ export const askQuestion = asyncHandler(
         maxLength: 1000,
       }),
       conversationId,
+      userId: currentUserId(req),
       meetingId: optionalString(req.body?.meetingId),
+      seriesId: optionalString(req.body?.seriesId),
     });
 
     return sendSuccess(
@@ -50,6 +55,7 @@ export const askQuestion = asyncHandler(
 export const getConversation = asyncHandler(
   async (req: Request, res: Response) => {
     const messages = await searchService.getConversation(
+      currentUserId(req),
       requireParam(req.params.id, "conversation id")
     );
 
