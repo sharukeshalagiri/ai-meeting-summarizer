@@ -73,16 +73,39 @@ const actionItemRow = {
   createdAt: now,
 };
 
+/** What a re-summarize produces (a different TL;DR, to see it replaced). */
+export const SUMMARY_V2_RESUMMARIZED = {
+  ...SUMMARY_V2,
+  tldr: "Re-summarized: Postgres full-text search for the beta; Marcus owns the endpoint.",
+};
+
 export interface MockOptions {
   title: string;
-  /** Make one step fail with a 502 and this message. */
-  failStep?: "transcribe" | "summarize";
+  /**
+   * Make one pipeline step fail. "summarize" fails the queued job: the
+   * progress stream reports processingStage FAILED with this message.
+   */
+  failStep?: "summarize";
   failMessage?: string;
+  /** Start on an already summarized meeting (the meeting page). */
+  summarized?: boolean;
+  /**
+   * POST /resummarize outlives its wait and returns { queued: true }
+   * (w3-jobs); the result arrives over the progress stream.
+   */
+  resummarizeQueued?: boolean;
 }
+
+/** A text/event-stream body, as GET /meetings/:id/events sends it. */
+const sse = (rows: unknown[]) =>
+  rows.map((row) => `event: progress\ndata: ${JSON.stringify(row)}\n\n`).join("") + "event: end\ndata: {}\n\n";
 
 export const mockApi = async (page: Page, options: MockOptions) => {
   const calls: string[] = [];
-  let summarized = false;
+  let summarized = options.summarized ?? false;
+  let summaryData: typeof SUMMARY_V2 = SUMMARY_V2;
+  // The job that the next GET /events reports on.
+  let pending: "process" | "resummarize" | null = null;
 
   const meeting = () => ({
     id: MEETING_ID,
@@ -101,7 +124,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
     processingProgress: null,
     processingError: null,
     transcript: { id: "t1", content: segments.map((s) => `${s.speaker}: ${s.text}`).join("\n") },
-    summary: summarized ? { id: "sum1", content: `# TL;DR\n\n${SUMMARY_V2.tldr}`, data: SUMMARY_V2, sentiment: "POSITIVE" } : null,
+    summary: summarized ? { id: "sum1", content: `# TL;DR\n\n${summaryData.tldr}`, data: summaryData, sentiment: "POSITIVE" } : null,
     actionItems: summarized ? [actionItemRow] : [],
   });
 
@@ -132,15 +155,57 @@ export const mockApi = async (page: Page, options: MockOptions) => {
         return ok(route, meeting(), 201);
       case `POST ${base}/audio`:
         return ok(route, meeting());
-      case `POST ${base}/transcribe`:
-        if (options.failStep === "transcribe") return fail(route, 502, options.failMessage ?? "Could not reach the transcription service.");
-        return ok(route, { id: "t1", content: "" });
-      case `POST ${base}/summarize`:
-        if (options.failStep === "summarize") return fail(route, 502, options.failMessage ?? "The AI service is temporarily overloaded.");
-        summarized = true;
-        // Same body as meeting.service startSummary: the summary runs in the
-        // background (here it is already done when the page polls).
-        return ok(route, { meetingId: MEETING_ID, status: "PROCESSING", processingStage: "SUMMARIZING" }, 202);
+      case `POST ${base}/process`:
+        // Same 202 body as meeting.service startProcessing (w3-jobs).
+        pending = "process";
+        return ok(route, { meetingId: MEETING_ID, status: "PROCESSING", processingStage: "TRANSCRIBING" }, 202);
+      case `POST ${base}/resummarize`:
+        if (!options.resummarizeQueued) {
+          summaryData = SUMMARY_V2_RESUMMARIZED;
+          return ok(route, { summary: meeting().summary, actionItems: [actionItemRow] });
+        }
+        pending = "resummarize";
+        return ok(route, {
+          queued: true,
+          meetingId: MEETING_ID,
+          status: "PROCESSING",
+          processingStage: "SUMMARIZING",
+          summary: null,
+          actionItems: null,
+        });
+      case `GET ${base}/events`: {
+        const row = (status: string, processingStage: string, processingError: string | null = null) => ({
+          id: MEETING_ID,
+          status,
+          source: "UPLOAD",
+          processingStage,
+          processingProgress: null,
+          processingError,
+        });
+        const job = pending;
+        pending = null;
+
+        if (job === "process" && options.failStep === "summarize") {
+          const message = options.failMessage ?? "The AI service is temporarily overloaded.";
+          return route.fulfill({
+            status: 200,
+            headers,
+            contentType: "text/event-stream",
+            body: sse([row("PROCESSING", "SUMMARIZING"), row("FAILED", "FAILED", `[SUMMARIZING/AI_UNAVAILABLE] ${message}`)]),
+          });
+        }
+        if (job === "process") summarized = true;
+        if (job === "resummarize") summaryData = SUMMARY_V2_RESUMMARIZED;
+
+        // A re-summarize keeps status COMPLETED; only the stage moves.
+        const running = job === "resummarize" ? row("COMPLETED", "SUMMARIZING") : row("PROCESSING", "SUMMARIZING");
+        return route.fulfill({
+          status: 200,
+          headers,
+          contentType: "text/event-stream",
+          body: sse(job ? [running, row("COMPLETED", "DONE")] : [row(summarized ? "COMPLETED" : "CREATED", summarized ? "DONE" : "")]),
+        });
+      }
       case `GET ${base}`:
         return ok(route, meeting());
       case `GET ${base}/segments`:

@@ -1,8 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
-import { getErrorMessage } from "../api/api";
+import { getData, getErrorMessage } from "../api/api";
 import { resummarize } from "../api/w1-sum";
 import { useFetch } from "../hooks/useFetch";
+import type { MeetingProgress } from "../types/w3-jobs";
+import ProgressSteps from "./progress/ProgressSteps";
+import { failureMessage, isFailed } from "./progress/stages";
+import { useMeetingProgress } from "./progress/useMeetingProgress";
 import type { Sentiment, StructuredSummary } from "../types/meeting";
 import type {
   ActionItemRow,
@@ -343,9 +347,42 @@ function SummaryView({ summary }: Props) {
   const [fresh, setFresh] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A re-summarize that outlived the request (w3-jobs) and is followed
+  // over the meeting's progress stream instead.
+  const [queued, setQueued] = useState(false);
 
   const v2 = readSummaryV2(fresh ?? summary);
   const setting: ModeSetting = review.data?.modeSetting ?? v2?.modeSetting ?? "AUTO";
+
+  const { progress } = useMeetingProgress(meetingId, {
+    enabled: queued,
+    onSettled: (row) => void settleQueued(row),
+  });
+
+  /** The queued job settled: show its result, or why it failed. */
+  const settleQueued = async (row: MeetingProgress) => {
+    try {
+      if (isFailed(row)) {
+        setError(
+          failureMessage(row.processingError) ??
+            "The summary could not be regenerated. Try again."
+        );
+        return;
+      }
+
+      const meeting = await getData<{ summary?: { data: unknown } | null }>(
+        `/meetings/${meetingId}`
+      );
+      if (meeting.summary?.data) setFresh(meeting.summary.data);
+      await review.refetch();
+    } catch (err) {
+      console.error(err);
+      setError(getErrorMessage(err));
+    } finally {
+      setQueued(false);
+      setBusy(false);
+    }
+  };
 
   const run = async (mode: ModeSetting) => {
     if (!meetingId) return;
@@ -355,6 +392,13 @@ function SummaryView({ summary }: Props) {
 
     try {
       const result = await resummarize(meetingId, mode);
+
+      if (result.queued) {
+        // Still running: stay busy until the progress stream settles.
+        setQueued(true);
+        return;
+      }
+
       const next = readSummaryV2(result.summary.data);
 
       setFresh(result.summary.data);
@@ -364,10 +408,10 @@ function SummaryView({ summary }: Props) {
         detectedMode: next?.detectedMode ?? null,
         actionItems: result.actionItems,
       });
+      setBusy(false);
     } catch (err) {
       console.error(err);
       setError(getErrorMessage(err));
-    } finally {
       setBusy(false);
     }
   };
@@ -389,6 +433,15 @@ function SummaryView({ summary }: Props) {
           This summary uses the older format. Re-summarize to get evidence
           links, deadlines and mode-specific sections.
         </p>
+      )}
+
+      {queued && (
+        <div className="card" role="status">
+          <ProgressSteps stage={progress?.processingStage ?? "SUMMARIZING"} />
+          <p className="muted tiny" style={{ marginBottom: 0 }}>
+            Still regenerating the summary; it will appear here when done.
+          </p>
+        </div>
       )}
 
       {error && (
