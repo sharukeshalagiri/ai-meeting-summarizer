@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
-import type { Meeting } from "../types/meeting";
+import type { Meeting, StructuredSummary } from "../types/meeting";
 import { formatDate, formatDuration } from "../utils/format";
 import StatusBadge from "./StatusBadge";
+import { readSummaryV2 } from "./summary/summaryData";
 
 interface Props {
   meeting: Meeting;
@@ -14,8 +15,35 @@ const PLATFORM_LABEL: Record<string, string> = {
   OTHER: "Browser",
 };
 
+/**
+ * What the card shows from a summary, for both stored schema versions:
+ * v1 (StructuredSummary) and v2 (schemaVersion 2, the pipeline since
+ * Pair 1). Reading v1 fields off a v2 summary threw and blanked the list.
+ */
+const glance = (data: unknown) => {
+  const v2 = readSummaryV2(data);
+  if (v2) {
+    return {
+      excerpt: v2.tldr,
+      decisions: v2.decisions.length,
+      blockers: (v2.sections.project?.people ?? []).reduce(
+        (sum, person) => sum + person.blockers.length,
+        0
+      ),
+    };
+  }
+
+  const v1 = (data ?? null) as Partial<StructuredSummary> | null;
+  if (!v1) return null;
+  return {
+    excerpt: v1.executiveSummary ?? "",
+    decisions: v1.keyDecisions?.length ?? 0,
+    blockers: v1.blockers?.length ?? 0,
+  };
+};
+
 function MeetingCard({ meeting }: Props) {
-  const summary = meeting.summary?.data;
+  const summary = glance(meeting.summary?.data);
   const duration = formatDuration(meeting.durationSec);
 
   const openTasks =
@@ -51,8 +79,8 @@ function MeetingCard({ meeting }: Props) {
 
       {/* The executive summary is far more useful at a glance than the
           description the user typed, so it wins when present. */}
-      {summary ? (
-        <p className="card-excerpt">{summary.executiveSummary}</p>
+      {summary?.excerpt ? (
+        <p className="card-excerpt">{summary.excerpt}</p>
       ) : (
         meeting.description && (
           <p className="card-excerpt">{meeting.description}</p>
@@ -61,19 +89,19 @@ function MeetingCard({ meeting }: Props) {
 
       {summary && (
         <div className="card-facts">
-          {summary.keyDecisions.length > 0 && (
+          {summary.decisions > 0 && (
             <span className="chip">
-              {summary.keyDecisions.length} decision
-              {summary.keyDecisions.length === 1 ? "" : "s"}
+              {summary.decisions} decision
+              {summary.decisions === 1 ? "" : "s"}
             </span>
           )}
 
           {openTasks > 0 && <span className="chip">{openTasks} open</span>}
 
-          {summary.blockers.length > 0 && (
+          {summary.blockers > 0 && (
             <span className="chip tone-critical">
-              {summary.blockers.length} blocker
-              {summary.blockers.length === 1 ? "" : "s"}
+              {summary.blockers} blocker
+              {summary.blockers === 1 ? "" : "s"}
             </span>
           )}
         </div>
