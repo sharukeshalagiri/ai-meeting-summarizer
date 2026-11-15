@@ -1,0 +1,140 @@
+# Production stack: one host, one `docker compose` command.
+#
+#   cp deploy/.env.example deploy/.env   # fill in real values (never commit it)
+#   docker compose -f docker-compose.prod.yml --env-file deploy/.env up -d --build
+#
+# Services:
+#   caddy      TLS (automatic Let's Encrypt) + single origin:
+#              /api/* and /health -> backend, everything else -> web.
+#   web        static frontend (nginx-unprivileged, :8080)
+#   backend    Express API (:5000), never published directly
+#   migrate    one-shot `prisma migrate deploy`; backend waits for it
+#   ai-service faster-whisper on CPU int8 (:8000), internal only
+#   postgres   pgvector/pg16, internal only (no host port)
+#
+# Required values use ${VAR:?}, so a missing secret stops `up` with a
+# clear error instead of booting with a default. See deploy/README.md.
+
+name: ai-meeting-summarizer-prod
+
+x-backend-env: &backend-env
+  NODE_ENV: production
+  PORT: "5000"
+  DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_meeting_summarizer}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY}
+  DEVICE_TOKEN: ${DEVICE_TOKEN:?set DEVICE_TOKEN}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
+  GEMINI_CLEAN_MODEL: ${GEMINI_CLEAN_MODEL:-gemini-flash-lite-latest}
+  AI_SERVICE_URL: http://ai-service:8000
+  CORS_ORIGIN: ${CORS_ORIGIN:-https://${DOMAIN:-localhost}}
+  TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-local}
+  DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+  UPLOAD_DIR: uploads/meetings
+  LIVE_CHUNK_DIR: uploads/live
+
+services:
+  caddy:
+    image: caddy:2.11.8-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # Same origin through caddy, so no CORS and no rebuild per domain.
+        VITE_API_URL: /api
+    image: ai-meeting-summarizer/web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    image: ai-meeting-summarizer/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ai-service:
+        condition: service_started
+    volumes:
+      # Same mount path as ai-service: the backend sends absolute paths
+      # (/app/uploads/...) and the ai-service opens them directly.
+      - uploads:/app/uploads
+
+  migrate:
+    # Same image as the backend; runs once per `up` and exits 0. A failed
+    # migration exits non-zero, so the backend never starts against a
+    # schema it does not expect.
+    image: ai-meeting-summarizer/backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+    command: ["npx", "--no-install", "prisma", "migrate", "deploy"]
+    environment: *backend-env
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai-service:
+    build:
+      context: ./ai-service
+    image: ai-meeting-summarizer/ai-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+    volumes:
+      - uploads:/app/uploads
+      # Hugging Face cache: the Whisper model is downloaded here on first
+      # use and kept across image upgrades (never baked into the image).
+      - whisper_models:/models
+    deploy:
+      resources:
+        limits:
+          # `small` int8 needs about 1-1.5 GB while transcribing.
+          memory: ${AI_SERVICE_MEMORY_LIMIT:-2g}
+
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_meeting_summarizer}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  uploads:
+  whisper_models:
+  caddy_data:
+  caddy_config:
