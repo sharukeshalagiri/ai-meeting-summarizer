@@ -91,6 +91,34 @@ const transcriptionProvider = (): "local" | "deepgram" => {
   return value;
 };
 
+/**
+ * Where background jobs run (w3-jobs): "pgboss" (durable, in Postgres;
+ * the default) or "memory" (in-process, lost on restart). Tests always
+ * use "memory" so they never need a database.
+ */
+const jobsDriver = (): "pgboss" | "memory" => {
+  if (process.env.NODE_ENV === "test") return "memory";
+
+  const value = optional("JOBS_DRIVER", "pgboss").trim().toLowerCase();
+
+  if (value !== "pgboss" && value !== "memory") {
+    throw new Error(`JOBS_DRIVER must be "pgboss" or "memory", got "${value}".`);
+  }
+
+  return value;
+};
+
+/** Storage driver for recordings and job artifacts. Only "local" exists. */
+const storageDriver = (): "local" => {
+  const value = optional("STORAGE_DRIVER", "local").trim().toLowerCase();
+
+  if (value !== "local") {
+    throw new Error(`STORAGE_DRIVER must be "local", got "${value}".`);
+  }
+
+  return value;
+};
+
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   isProduction,
@@ -153,6 +181,13 @@ export const env = {
   deepgramApiKey: process.env.DEEPGRAM_API_KEY?.trim() || null,
   /** nova-2 takes `keywords`; nova-3 models take `keyterm` instead. */
   deepgramModel: optional("DEEPGRAM_MODEL", "nova-2"),
+
+  /** See jobsDriver() above (w3-jobs). */
+  jobsDriver: jobsDriver(),
+  /** See storageDriver() above. */
+  storageDriver: storageDriver(),
+  /** Root of local storage (recordings, job artifacts), relative to backend/. */
+  storageDir: optional("STORAGE_DIR", "uploads"),
 } as const;
 
 export type Env = typeof env;

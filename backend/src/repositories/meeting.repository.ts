@@ -101,6 +101,22 @@ export const updateProcessing = (
     },
   });
 
+/** The columns the progress stream (SSE) sends; no relations. */
+export const findProgress = (id: string) =>
+  prisma.meeting.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      status: true,
+      source: true,
+      processingStage: true,
+      processingProgress: true,
+      processingError: true,
+    },
+  });
+
+export type MeetingProgress = NonNullable<Awaited<ReturnType<typeof findProgress>>>;
+
 export const markStarted = (id: string) =>
   prisma.meeting.update({
     where: { id },
