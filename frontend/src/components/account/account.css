@@ -1,0 +1,139 @@
+/* Accounts, devices, series and exports (w4-acct). Uses the tokens in index.css. */
+
+.acct input[type='email'],
+.acct input[type='password'],
+.acct input[type='number'],
+.acct select {
+  font: inherit;
+  width: 100%;
+  color: var(--text-h);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-size: 16px;
+}
+
+.acct input:focus,
+.acct select:focus {
+  border-color: var(--accent);
+}
+
+.acct-form {
+  display: grid;
+  gap: 16px;
+  max-width: 560px;
+}
+
+.acct-form .hint {
+  margin: 4px 0 0;
+}
+
+.acct-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+}
+
+.account-menu {
+  position: relative;
+}
+
+.account-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.account-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 200px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+.token-box {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.device-list,
+.series-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.device-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.is-revoked {
+  opacity: 0.6;
+}
+
+.since-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.since-item:first-child {
+  border-top: 0;
+}
+
+.export-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.series-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.series-picker select {
+  width: auto;
+  min-width: 160px;
+  padding: 6px 10px;
+}

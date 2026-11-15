@@ -40,7 +40,15 @@ export interface LiveMeetingInfo {
 /** How long stop() waits for the backlog before ending the session. */
 const FLUSH_TIMEOUT_MS = 2 * 60_000;
 
-const DEVICE_TOKEN = import.meta.env.VITE_DEVICE_TOKEN as string | undefined;
+/**
+ * w4-acct: the web page is signed in, so it authenticates with the
+ * session cookie rather than a device token (recorders outside the
+ * browser use per-user tokens from the Devices page). The frontend and
+ * backend are on different ports in development, so the cookie needs
+ * credentials: "include".
+ */
+const withSession: typeof fetch = (input, init) =>
+  fetch(input, { ...init, credentials: "include" });
 
 const SILENT_LEVELS: Levels = {
   mic: { level: 0, silent: false },
@@ -67,7 +75,7 @@ export function useLiveCapture() {
   const sessionIdRef = useRef<string | null>(null);
   const stoppingRef = useRef(false);
   const clientRef = useRef(
-    createCaptureClient({ apiBase: API_BASE_URL, token: DEVICE_TOKEN })
+    createCaptureClient({ apiBase: API_BASE_URL, fetchImpl: withSession })
   );
 
   // The UI timer follows the recording clock, not upload progress, so

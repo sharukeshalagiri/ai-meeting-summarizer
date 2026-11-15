@@ -18,6 +18,10 @@ import { useFetch } from "../hooks/useFetch";
 import { AudioPlayer } from "../lib/audio/AudioPlayer";
 import { AudioPlayerProvider } from "../lib/audio/AudioPlayerProvider";
 import type { Meeting, Segment } from "../types/meeting";
+import ExportMenu from "../components/export/ExportMenu";
+import SeriesPicker from "../components/series/SeriesPicker";
+import SinceLastTimeList from "../components/series/SinceLastTimeList";
+import type { MeetingAccountFields, SinceLastTime } from "../types/w4-acct";
 import { formatDate, formatDuration } from "../utils/format";
 
 const TABS = [
@@ -147,6 +151,9 @@ function MeetingDetails() {
   const incomplete = !noSpeech && (hasFailed || !meeting.summary);
 
   const duration = formatDuration(meeting.durationSec);
+  // w4-acct: series link, retention and "Since last time".
+  const account = meeting as Meeting & MeetingAccountFields;
+  const since = (meeting.summary?.data as { sinceLastTime?: SinceLastTime } | null | undefined)?.sinceLastTime;
 
   return (
     <AudioPlayerProvider
@@ -191,6 +198,21 @@ function MeetingDetails() {
 
       {meeting.description && (
         <p className="description">{meeting.description}</p>
+      )}
+
+      <div className="acct-row" style={{ marginBottom: 12 }}>
+        <SeriesPicker
+          meetingId={meeting.id}
+          seriesId={account.seriesId ?? null}
+          onChange={(seriesId) => setMeeting({ ...account, seriesId } as Meeting)}
+        />
+      </div>
+
+      {account.audioDeletedAt && !meeting.audioPath && (
+        <p className="muted tiny" role="status">
+          The recording was deleted on {formatDate(account.audioDeletedAt)} (your audio retention setting). The
+          transcript and summary are kept.
+        </p>
       )}
 
       {meeting.audioPath && (
@@ -291,6 +313,15 @@ function MeetingDetails() {
           id="panel-summary"
           aria-labelledby="tab-summary"
         >
+          {since && since.items.length > 0 && (
+            <section className="card" style={{ marginBottom: 16 }}>
+              <h2>Since last time</h2>
+              <SinceLastTimeList meetingId={meeting.id} data={since} />
+            </section>
+          )}
+
+          {meeting.summary && <div style={{ marginBottom: 16 }}><ExportMenu meetingId={meeting.id} /></div>}
+
           {meeting.summary?.data ? (
             <SummaryView summary={meeting.summary.data} />
           ) : (

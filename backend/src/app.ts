@@ -25,6 +25,8 @@ export const createApp = () => {
     cors({
       origin: env.corsOrigin === "*" ? true : env.corsOrigin.split(",").map((o) => o.trim()),
       credentials: true,
+      // Export downloads read the file name from it.
+      exposedHeaders: ["Content-Disposition"],
     })
   );
   app.use(express.json({ limit: "1mb" }));
