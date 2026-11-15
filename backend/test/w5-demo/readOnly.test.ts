@@ -33,6 +33,9 @@ vi.mock("../../src/services/embedding.service", () => ({
     return 0;
   }),
 }));
+vi.mock("../../src/repositories/embedding.repository", () => ({
+  search: vi.fn(async () => []),
+}));
 vi.mock("../../src/lib/gemini", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/gemini")>();
   return {
