@@ -134,7 +134,12 @@ const v2Sections = (summary: SummaryV2, input: ExportInput): ExportSection[] => 
   const s = summary.sections ?? {};
   const out: ExportSection[] = [
     ...section("Key points", items(summary.keyPoints, (i) => i.text, input)),
-    ...section("Decisions", items(summary.decisions, (i) => i.text, input, (i) => [i.decidedBy ? `by ${i.decidedBy}` : null])),
+    ...section(
+      "Decisions",
+      items(summary.decisions, (i) => i.text, input, (i) => [
+        i.decidedBy ? `by ${i.decidedBy === input.defaultMeLabel ? input.meLabel : i.decidedBy}` : null,
+      ])
+    ),
     ...section(
       "Dates",
       items(summary.dates, (i) => `${i.spoken}: ${i.description}`, input, (i) => [i.date])

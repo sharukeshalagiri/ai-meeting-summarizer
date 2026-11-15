@@ -25,7 +25,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH = 200;
 
 export interface RetentionDeps {
-  users: Pick<typeof userRepo, "findWithRetention">;
+  users: {
+    findWithRetention: () => Promise<
+      { id: string; audioRetention: string; audioRetentionDays: number | null }[]
+    >;
+  };
   meetings: Pick<typeof retentionRepo, "findAudioToDelete" | "markAudioDeleted">;
   removeFile: (absolutePath: string) => Promise<void>;
 }

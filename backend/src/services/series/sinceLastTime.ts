@@ -245,7 +245,7 @@ export interface SinceDeps {
 }
 
 const defaultDeps: SinceDeps = {
-  earlierItems: seriesRepo.findEarlierOpenItems,
+  earlierItems: (input) => seriesRepo.findEarlierOpenItems(input),
   judge: geminiJudge,
 };
 
