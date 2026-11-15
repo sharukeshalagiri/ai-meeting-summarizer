@@ -3,7 +3,7 @@ import path from "path";
 import { Queues, type PipelineJob } from "../jobs/definitions";
 import { parseFailure, PROCESSING_NOTES, SUMMARY_FAILED } from "../jobs/errors";
 import { enqueue, isPipelineBusy, memoryJobPromise } from "../jobs/index";
-import { setProgress, waitForMeeting } from "../jobs/progress";
+import { setProgress, waitForMeeting, watchMeeting } from "../jobs/progress";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
 import * as meetingRepo from "../repositories/meeting.repository";
@@ -97,6 +97,20 @@ export const getAudioFile = async (meetingId: string): Promise<string> => {
 
   return absolutePath;
 };
+
+/** Status and processing* columns only (the progress stream). */
+export const getProgress = async (meetingId: string) => {
+  const row = await meetingRepo.findProgress(meetingId);
+
+  if (!row) {
+    throw NotFound("Meeting not found");
+  }
+
+  return row;
+};
+
+/** Subscribes to a meeting's progress (GET /meetings/:id/events). */
+export const watchProgress = watchMeeting;
 
 /** Throws unless the meeting exists; avoids loading relations. */
 const assertExists = async (meetingId: string): Promise<void> => {

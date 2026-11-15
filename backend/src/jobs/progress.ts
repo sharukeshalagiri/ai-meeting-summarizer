@@ -109,3 +109,65 @@ export const waitForMeeting = (
 
     void check();
   });
+
+/**
+ * Calls `onChange` with the meeting's progress row whenever it changes:
+ * at once on a progress event in this process, and on a `pollMs` re-read
+ * otherwise (writes from another process, or from code that updates the
+ * repository directly). Returns the unsubscribe function.
+ */
+export const watchMeeting = (
+  meetingId: string,
+  onChange: (row: meetingRepo.MeetingProgress) => void,
+  options: { pollMs?: number; initial?: meetingRepo.MeetingProgress } = {}
+): (() => void) => {
+  let last = options.initial ? JSON.stringify(options.initial) : "";
+  let stopped = false;
+  let checking = false;
+  let again = false;
+
+  const check = async () => {
+    if (stopped) return;
+    if (checking) {
+      again = true;
+      return;
+    }
+    checking = true;
+
+    try {
+      const row = await meetingRepo.findProgress(meetingId);
+      const serialized = JSON.stringify(row);
+      if (row && !stopped && serialized !== last) {
+        last = serialized;
+        onChange(row);
+      }
+    } catch (error) {
+      log.warn("Progress watch read failed", {
+        meetingId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      checking = false;
+      if (again) {
+        again = false;
+        void check();
+      }
+    }
+  };
+
+  const onEvent = (event: ProgressEvent) => {
+    if (event.meetingId === meetingId) void check();
+  };
+
+  progressBus.on(PROGRESS_EVENT, onEvent);
+  const poll = setInterval(() => void check(), options.pollMs ?? 5000);
+  poll.unref?.();
+
+  if (!options.initial) void check();
+
+  return () => {
+    stopped = true;
+    clearInterval(poll);
+    progressBus.off(PROGRESS_EVENT, onEvent);
+  };
+};
