@@ -27,8 +27,10 @@ added stereo-aware transcription with faster-whisper (w1-asr) and the
 summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. Pair 4
 has added durable background jobs on pg-boss, with progress over SSE
 (w3-jobs, wired in by `chore/pair-4-wiring`), and production Docker
-images, a compose file and a deploy guide (w3-infra). Auth does not
-exist yet. It is the waves' work.
+images, a compose file and a deploy guide (w3-infra). Wave 4 has added
+accounts (w4-acct): email + password sign-in with server-side sessions,
+every query scoped by user, per-user device tokens for recorders,
+settings, audio retention, exports and meeting series.
 
 ## Operating mode (every session follows this)
 
@@ -147,7 +149,11 @@ Every recorder (extension, desktop recorder, web page, bot) uses the
 
 ```
 Recorder (stereo: left = my mic, right = everyone else)
-  Authorization: Bearer <DEVICE_TOKEN>      one middleware: middleware/deviceAuth.middleware.ts
+  Authorization: Bearer <device token>      per-user token from the Devices page (amsd_…);
+                                            one middleware: middleware/deviceAuth.middleware.ts
+        unknown or revoked token -> 401 (even with a session cookie);
+        no header -> the session cookie (web Live page); the capture belongs to that account
+        /live/sessions/:id of another account -> 404, before multer stores anything
   POST /api/live/sessions {title, platform, source, mode, hints[]} -> {sessionId, meetingId}
   POST /api/live/sessions/:id/chunks  multipart: audio, seq, startOffsetMs, durationMs, channelLayout
         LiveChunk row claimed on (sessionId, seq): idempotent
@@ -174,9 +180,35 @@ arrival order, takes offsets from the session clock and deletes the file.
 It keeps working, but new recorders must use the contract.
 
 Playback: `GET /api/meetings/:id/audio` streams the stored recording with
-HTTP Range support (`res.sendFile`). There is no owner check until auth
-exists. Live meetings have no single recording, so it returns 404 for
+HTTP Range support (`res.sendFile`). It is owner-checked like every
+`/meetings/:id` path (another account's meeting is a 404), and `<audio>`
+sends the session cookie by itself. After the audio-retention job has
+deleted a recording (`audioDeletedAt` set, `audioPath` cleared) it is a
+404 too. Live meetings have no single recording, so it returns 404 for
 them.
+
+### Accounts and auth (w4-acct)
+
+```
+POST /api/auth/login | logout | signup (AUTH_ALLOW_SIGNUP) ; GET /api/auth/me ; POST /api/auth/password
+  passport-local + express-session, PrismaSessionStore (Session table), argon2id
+  cookie ams.sid: httpOnly, SameSite=Lax, Secure in production, rolling SESSION_MAX_AGE_DAYS
+routes/index.ts: /auth and /health public; /live device auth; everything else requireUser
+  /meetings/:id/*  requireMeetingAccess (another account's meeting = 404, same as missing)
+  lists pass userId down to SQL; single-row writes check the owner (services/account/access.service.ts)
+/api/account/settings   display name ("You" label), timezone, default mode, provider, glossary, audio retention
+/api/devices            create (token shown once), list, POST /:id/revoke
+/api/series             list, create, rename; GET /:id/prep
+/api/meetings/:id/export?format=json|md|pdf&transcript=1 ; POST /:id/export/email (503 without SMTP_HOST)
+/api/meetings/:id/series (PUT) ; POST /:id/since-last-time/:itemId {apply|dismiss}
+job audio-retention     RETENTION_CRON; deletes recordings only, per each user's setting
+```
+
+The frontend sends the cookie (`withCredentials` in `api.ts` and on the
+progress EventSource). A 401 outside `/auth/` fires `ams:auth-required`,
+and `Layout` (which holds `AuthProvider`) redirects to `/login?next=…`.
+Pages: `Login`, `Settings`, `Devices`, `Prep`. The reasons are in
+`docs/DECISIONS.md` (the w4-acct entries).
 
 Search and Q&A: `GET /api/search` and `POST /api/chat` embed the query and
 run cosine similarity in SQL over `SegmentEmbedding`. Analytics:
@@ -242,6 +274,12 @@ npm run db:migrate            # prisma migrate deploy (backend/.env DATABASE_URL
 npm run dev                   # backend + frontend + ai-service via concurrently
 npm start                     # db:up + db:migrate + dev
 npm run db:down
+
+# accounts (password from a hidden prompt or stdin, never argv; ends that user's sessions)
+npm --prefix backend run user:password -- --email <e>               # set a password (e.g. the pre-account dev user)
+npm --prefix backend run user:password -- --email <e> --name <n>    # create the user if missing
+npm --prefix backend run user:password -- --list                    # users, meeting counts, password set or not
+# production image: node dist/lib/auth/cli.js --email <e>   (see deploy/README.md)
 
 # verify (run before calling anything done)
 npm run typecheck             # backend tsc (src + test) and frontend tsc -b
@@ -311,7 +349,7 @@ fails at boot):
 | `EMBEDDING_MODEL` | gemini-embedding-2 | |
 | `EMBEDDING_DIMS` | 768 | stored per row; search filters on it |
 | `AI_SERVICE_URL` | http://localhost:8000 | |
-| `CORS_ORIGIN` | * | |
+| `CORS_ORIGIN` | * | Credentialed CORS: `*` reflects the caller's origin (development); anything else is a comma-separated allow-list |
 | `UPLOAD_DIR` | uploads/meetings | relative to backend/ |
 | `LIVE_CHUNK_DIR` | uploads/live | |
 | `MAX_UPLOAD_MB` | 500 | |
@@ -319,13 +357,23 @@ fails at boot):
 | `TRANSCRIPTION_TIMEOUT_MINUTES` | 15 | |
 | `ROLLING_SUMMARY_MINUTES` | 7 | |
 | `LIVE_SESSION_IDLE_MINUTES` | 10 | |
-| `DEVICE_TOKEN` | unset | Bearer token for `/api/live`. Unset in development: allowed, with a warning. **Required in production**, or the backend refuses to boot. |
+| `DEVICE_TOKEN` | unset | **Deprecated and ignored** (w4-acct). Recorders use per-user device tokens from the Devices page. Still parsed so an old `.env` loads; no longer required in production |
 | `TRANSCRIPTION_PROVIDER` | local | `local` (ai-service) or `deepgram`; anything else fails at boot |
 | `DEEPGRAM_API_KEY` | unset | required when the provider is `deepgram` (paid per audio minute) |
 | `DEEPGRAM_MODEL` | nova-2 | |
 | `JOBS_DRIVER` | pgboss | `pgboss` (durable, in Postgres; creates its own `pgboss` schema) or `memory` (in-process, lost on restart); anything else fails at boot. Always `memory` under `NODE_ENV=test` |
 | `STORAGE_DRIVER` | local | `lib/storage` driver; only `local` exists, anything else fails at boot. Today it holds the pipeline's job artifacts; uploads still go to `UPLOAD_DIR` |
 | `STORAGE_DIR` | uploads | root of local storage, relative to backend/ |
+| `SESSION_SECRET` | unset (dev placeholder) | Signs the session cookie. **Required in production**, at least 32 characters (`openssl rand -hex 32`), or the backend refuses to boot. Unset in development: a fixed placeholder, with a warning |
+| `SESSION_MAX_AGE_DAYS` | 30 | days a login lasts without activity (the cookie is rolling) |
+| `AUTH_ALLOW_SIGNUP` | true (false in production) | `POST /api/auth/signup`; true/false, 1/0, yes/no or on/off, anything else fails at boot. Off: create accounts with `user:password` |
+| `SMTP_HOST` | unset | "email this summary"; unset = email export off (503) |
+| `SMTP_PORT` | 587 | |
+| `SMTP_SECURE` | false | true = TLS from the start (port 465); false = STARTTLS |
+| `SMTP_USER` | unset | auth is sent only when set |
+| `SMTP_PASSWORD` | unset | |
+| `SMTP_FROM` | Meeting Companion <no-reply@localhost> | |
+| `RETENTION_CRON` | 17 * * * * | when the audio-retention job runs (cron, UTC; hourly) |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
 precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (small), `WHISPER_DEVICE`
@@ -333,9 +381,10 @@ precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (small), `WHISPER_DEVICE`
 `WHISPER_LANGUAGE` (empty = auto-detect).
 
 **`frontend/.env.local`** (main checkout) or **`frontend/.env`** (written
-by `worktree:env`): `VITE_API_URL` (http://localhost:5000/api),
-`FRONTEND_PORT` (5173, read by `vite.config.ts`), and `VITE_DEVICE_TOKEN`
-(sent as the Bearer token if set; it is visible in the bundle).
+by `worktree:env`): `VITE_API_URL` (http://localhost:5000/api)
+and `FRONTEND_PORT` (5173, read by `vite.config.ts`). `VITE_DEVICE_TOKEN`
+is no longer read (w4-acct): the web app signs in with the session
+cookie.
 
 ### Parallel worktrees
 
@@ -471,8 +520,22 @@ non-obvious code. Keep doing that.
 - Backend tests use vitest. They live in `backend/test/**/*.test.ts` or
   next to the code as `src/**/*.test.ts` (excluded from the build).
   `vitest.config.mts` supplies placeholder `DATABASE_URL` and
-  `GEMINI_API_KEY`, sends uploads to a temp dir and leaves `DEVICE_TOKEN`
-  unset, so modules that import `lib/env.ts` load without a real `.env`.
+  `GEMINI_API_KEY`, sends uploads to a temp dir and blanks `DEVICE_TOKEN`,
+  so modules that import `lib/env.ts` load without a real `.env`.
+- **Accounts in tests:** `test/setup.auth.ts` (a `setupFiles` entry in
+  `vitest.config.mts`) signs every request in as a default user
+  (`TEST_USER`), so route tests written before accounts need no
+  credentials. A request with `x-test-user: <id>` runs as that user,
+  `x-test-user: anonymous` as nobody. It also makes every ownership
+  lookup (`access.repository`) answer that user and resolves account
+  settings to the server defaults. The only seam is
+  `lib/auth/currentUser.ts` `resolveUser`; production code has no test
+  bypass. Suites in `test/w4-acct/` override these mocks per test, or
+  use the real modules (`auth.test.ts` drives the real cookie flow).
+- **Isolation test:** `test/w4-acct/isolation.test.ts` lists every
+  registered route and fails if one is not classified. A new route must
+  be added there: another account's id is a 404, lists see only the
+  caller's id, and no session is a 401.
   Unit tests must not hit the network or the database. Jobs always use
   the in-process memory driver under `NODE_ENV=test`, so job routes need
   no setup (see `test/w3-jobs/`). Export pure

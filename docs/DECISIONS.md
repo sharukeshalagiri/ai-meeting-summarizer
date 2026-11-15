@@ -477,3 +477,229 @@ Full log: [docs/decisions/w3-infra.md](decisions/w3-infra.md).
 - **Not yet verified:** the images have not been built, locally or in
   CI. The tag-triggered release workflow is not merged, because pushing
   it needs a token with the `workflow` scope.
+
+## Accounts: Passport + express-session + argon2id, not Better Auth (w4-acct)
+
+Full log: [docs/decisions/w4-acct.md](decisions/w4-acct.md).
+
+- **Decision.** `passport-local` for email + password, `express-session`
+  with our own store over the Prisma `Session` table
+  (`lib/auth/sessionStore.ts`), and `@node-rs/argon2` (argon2id at the
+  library defaults, the OWASP minimum: 19 MiB, t=2, p=1, encoded in the
+  hash string).
+- **Why not Better Auth.** It is ESM-only with no `require` condition in
+  its `exports`, and the backend compiles to CommonJS with node10
+  resolution, so its subpath imports (the Prisma adapter) don't resolve
+  without changing the module system of the whole backend. It also
+  brings its own user/account/session tables, which would mean
+  reshaping `User`, and its handler works on Web `Request` objects
+  beside Express rather than through it. Auth.js's Express adapter is
+  experimental and built around OAuth. For one user with a password,
+  none of that buys anything.
+- **Why these.** Passport is the standard Express auth layer, CommonJS,
+  and a Google login later is one more strategy. Passport 0.6+
+  regenerates the session on login and logout (no session fixation).
+  `@node-rs/argon2` ships prebuilt binaries for Windows and glibc/musl
+  Linux, so no node-gyp on a laptop or in the image.
+- **Server-side sessions** rather than a signed, self-contained cookie:
+  logout deletes the row, and a password change ends every other session
+  of that user (`Session.userId`), at once. Only the user id is stored in
+  the session; each request re-reads the user.
+- **Hardening:** one 401 text ("Wrong email or password.") for every
+  failed login; an unknown email still runs an argon2 verify, so timing
+  does not reveal accounts; an in-memory throttle allows 10 failures per
+  email and per IP in 15 minutes, then 429 (a restart resets it, which is
+  enough for one process); passwords are 10 to 256 characters;
+  `GET /auth/me` never returns `passwordHash`.
+- **Consequences.** Every request reads the session (one indexed lookup
+  when a cookie is sent; none without one). Adding OAuth is a new
+  strategy, not a new library.
+
+## The session cookie (w4-acct)
+
+- **Decision.** `ams.sid`, httpOnly, `SameSite=Lax`, `Secure` in
+  production, rolling (`SESSION_MAX_AGE_DAYS`, default 30),
+  `saveUninitialized: false` (no row and no cookie until login).
+  `proxy: true` in production trusts Caddy's `X-Forwarded-Proto` for the
+  Secure flag without changing app-wide `trust proxy`. Signed with
+  `SESSION_SECRET`: required in production (at least 32 characters);
+  development falls back to a fixed placeholder with a warning, so
+  sessions survive ts-node-dev restarts.
+- **Why.** httpOnly keeps the cookie from page scripts. Lax stops other
+  sites from sending it on a POST; the dev frontend on another
+  localhost port is the same site, so it still works there.
+- **CORS** (`app.ts`): `credentials: true`, so the cookie crosses ports
+  in development. A credentialed response may not say `*`, so
+  `CORS_ORIGIN=*` now reflects the caller's origin, and anything else is
+  a comma-separated allow-list. `Content-Disposition` is exposed for
+  export downloads. Production is same-origin through Caddy.
+- **No CSRF tokens.** SameSite=Lax already keeps the cookie off
+  cross-site POSTs, and every state change is a POST, PUT, PATCH or
+  DELETE. If the app ever moves to a different site than its API, this
+  needs revisiting.
+- **Consequences.** The frontend sends `withCredentials` (axios and
+  EventSource) and the Live page fetches with `credentials: "include"`.
+  The SSE progress stream is now authenticated by the cookie, which
+  closes the "Open" item in the w3-jobs SSE entry above; `<audio>` sends
+  it by itself.
+
+## Every query is scoped by user; another account's row is a 404 (w4-acct)
+
+- **Decision.** Defence in depth, in three layers:
+  1. `routes/index.ts`: `/auth` and `/health` are public, `/live` has
+     device auth, and everything else is behind `requireUser`.
+     `router.use("/meetings/:id", requireMeetingAccess)` runs before
+     every router that serves a meeting's sub-resources (meeting, w1-sum,
+     w2-spk, w3-jobs, exports, series), so their controllers never run
+     for someone else's meeting. `/live/sessions/:id` has the same guard
+     (`requireLiveSessionAccess`), placed before multer, so a chunk for
+     someone else's session is never written to disk.
+  2. Lists take a `userId` down to SQL: meetings, analytics (every
+     aggregate), action items, transcripts, series, devices, chat threads
+     (`ChatMessage.userId`) and the raw search SQL.
+  3. Single-row writes outside `/meetings/:id` check the owner first
+     (`services/account/access.service.ts`, lookups in
+     `repositories/access.repository.ts`): action item status, chat
+     thread ids, transcripts, series, device revoke, and "Since last
+     time" applying a change to an earlier meeting's task.
+- **404, not 403.** A row of another account answers exactly like a
+  missing one (same status, same message), so ids reveal nothing, not
+  even that they exist.
+- **The "first user" fallback is gone.** A meeting's owner is always the
+  signed-in user or the device token's account; a `userId` in a request
+  body is ignored.
+- **Route-coverage test.** `test/w4-acct/isolation.test.ts` enumerates
+  every registered route and fails when one is not classified, so a new
+  endpoint cannot ship without an isolation check. For each id route,
+  Alice with Bob's id gets 404; each list or create route reaches its
+  repositories with Alice's id only; each non-public route without a
+  session is 401. Removing the `/meetings/:id` guard fails 27 tests (the
+  track's mutation check).
+- **Consequences.** A new route under `/meetings/:id` is guarded for free;
+  a new route anywhere else must be added to the isolation test's
+  classification, and a list must pass the user id to its repository.
+
+## Per-user device tokens replace DEVICE_TOKEN (w4-acct)
+
+This replaces the "Device token instead of user auth, for now" entry
+above.
+
+- **Decision.** The `DeviceToken` table: `amsd_` + 32 random bytes
+  (base64url), stored only as its SHA-256, with a display prefix
+  (`amsd_` + 4 characters), `kind` (EXTENSION, DESKTOP, OTHER),
+  `lastUsedAt` (written at most once a minute) and `revokedAt`. Created
+  and revoked on the Devices page; the token is shown once; at most 20
+  active per user.
+- **Why a fast hash.** A 256-bit random token is not guessable, so a slow
+  password hash buys nothing, and SHA-256 keeps the lookup one indexed
+  equality on `tokenHash`.
+- **Only `deviceAuth.middleware.ts` changed.** A Bearer token must belong
+  to an account and not be revoked (checked on every request, no cache),
+  and the request then runs as that account. A bad token is a 401 even
+  when a session cookie is also present: an explicit credential that
+  fails never falls back to another. With no header, the session is used
+  (the web Live page).
+- **Recorders are unchanged.** Both already send
+  `Authorization: Bearer <their setting>`; the user pastes the new token
+  into the same field. `test/w4-acct/devices.test.ts` replays both
+  recorders' multipart uploads: after revoke, start, chunk, roster and
+  end are all 401 and nothing is stored, and one account's token cannot
+  upload into another's session (404).
+- **Consequences.** `DEVICE_TOKEN` is deprecated and ignored (still
+  parsed so an old `.env` loads), and no longer required in production;
+  `SESSION_SECRET` is required instead. `VITE_DEVICE_TOKEN` is no longer
+  read. One recorder can be revoked without touching the others, and
+  every capture is owned by the account whose token sent it.
+
+## Sign-up is off in production; a CLI sets passwords (w4-acct)
+
+- **Decision.** `AUTH_ALLOW_SIGNUP` defaults to on outside production and
+  off in production (`POST /auth/signup` then answers 403).
+  `npm --prefix backend run user:password -- --email <e> [--name <n>]`
+  sets a password for an existing user (such as the dev user who owns
+  every pre-account meeting) or, with `--name`, creates one; `--list`
+  shows users with their meeting count and whether a password is set.
+  It ends that user's sessions.
+- **Why.** A personal deployment on a public URL must not let strangers
+  create accounts, and the meetings created before accounts already
+  belong to a user who has no password.
+- **The password is never in argv:** a hidden prompt (asked twice), or
+  stdin when piped (a Windows BOM and trailing CRLF are stripped), so it
+  stays out of shell history.
+- **Consequences.** The code is in `src/lib/auth/cli.ts` (the script in
+  `backend/scripts/set-password.ts` only imports it), so the production
+  image, which has no ts-node, runs `node dist/lib/auth/cli.js`.
+
+## Audio retention is a scheduled job (w4-acct)
+
+- **Decision.** A per-user setting (`KEEP`, the default;
+  `AFTER_PROCESSING`; `AFTER_DAYS` with N days), enforced by the
+  `audio-retention` queue (`jobs/definitions.ts`, `jobs/worker.ts`). The
+  server schedules it on `RETENTION_CRON` (default `17 * * * *`, hourly,
+  UTC); the memory driver uses `*/60 * * * *` because it only parses
+  `*/N`. `retryLimit: 0`: the next run picks up what is left. At most 200
+  meetings per user per run.
+- **What is deleted.** Only recordings: the upload file and every
+  LiveChunk file of COMPLETED meetings with no stage running (DONE or
+  none). Then `audioDeletedAt` is set and `audioPath` cleared. The
+  transcript, summary, tasks and search index stay ("keep what was said,
+  not the audio"). FAILED meetings keep their audio so they can be
+  retried. LiveChunk rows stay, since they are the idempotency record.
+- **Idempotent.** A missing file counts as deleted, and a meeting is
+  marked only after all its files are gone, so a file that cannot be
+  removed leaves its meeting for the next run.
+- **Consequences.** After a sweep, playback answers 404 and
+  MeetingDetails says the recording was removed. A retry can still resume
+  from CLEAN, but transcribing that meeting again is no longer possible.
+
+## Exports: one model, Markdown and PDF on the server (w4-acct)
+
+- **Decision.** `services/export/exportModel.ts` builds a neutral
+  document that `render.ts` turns into Markdown and into a PDF (pdfkit:
+  pure JavaScript, built-in Helvetica, no headless browser).
+  `GET /meetings/:id/export?format=json|md|pdf&transcript=1` (`json`
+  backs "copy as Markdown"); `POST /meetings/:id/export/email` sends the
+  Markdown body with the PDF and `.md` attached, to the owner's own
+  address by default (at most 10 recipients), `replyTo` the owner.
+- **Names, not ids.** Evidence becomes "Priya at 1:05", and the owner's
+  display name replaces the default "You". No database id appears (a
+  test asserts it).
+- **Noise and rejected items are left out.** Segments the CLEAN pass
+  labelled small_talk, logistics, filler or off_topic are dropped from
+  the transcript; action items come from the ActionItem rows minus task
+  texts a human rejected; dismissed "Since last time" items are dropped.
+- **PDF on the server** so the Markdown and the PDF never disagree and
+  the email can attach it. The cost: Helvetica covers only Latin-1, so
+  other characters become `?` in the PDF; the Markdown keeps them.
+- **SMTP only through `SMTP_*`.** With no `SMTP_HOST` the email endpoint
+  answers 503 and nothing is sent. Tests install nodemailer's
+  `jsonTransport` (`setTransportForTests`), so no real mail is ever sent.
+
+## Series and "Since last time": suggestions, confirmed by the user (w4-acct)
+
+- **Decision.** `Series` is unique per user and name; `Meeting.seriesId`
+  is nullable (deleting a series sets it to null). For a meeting in a
+  series with earlier open items, the w1-sum v2 summarize makes one
+  Gemini call that judges up to 30 earlier PENDING items (newest first)
+  as done, still open or not mentioned, against this transcript without
+  noise segments (capped at 60k characters). The result is stored in
+  `Summary.data.sinceLastTime`, so it needs no column.
+- **Validated, never trusted.** `parseVerdicts` drops segment idx values
+  that are not in the transcript, downgrades "done" without evidence to
+  "still open", and makes a missing verdict "not mentioned". Evidence is
+  by `TranscriptSegment.idx`. A failure only skips the section, never the
+  summary; the legacy fallback summary has no section.
+- **Nothing changes by itself.** A "done" item carries a suggested status
+  (COMPLETED). `POST /meetings/:id/since-last-time/:actionItemId`
+  `{apply|dismiss}`: `apply` checks the earlier item is the user's and
+  marks it COMPLETED; either answer records a `SINCE_LAST_TIME`
+  Correction (through `correction.repository` `record()`, with the
+  evidence idx values) and is kept in the summary data, so a re-summarize
+  keeps earlier dismissals and does not ask again.
+- **Why.** A wrong "done" closes someone's task silently; a confirmed
+  suggestion costs one click, and the Correction rows are labelled data
+  for measuring the judge later.
+- **Also.** `GET /series/:id/prep` gathers the open items across the
+  series and the latest meeting's TL;DR, decisions, open questions,
+  "prepare for next time" and "since last time". `seriesId` on
+  `GET /search` and `POST /chat` limits retrieval to the series.

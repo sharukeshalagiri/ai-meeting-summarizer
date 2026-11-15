@@ -14,19 +14,30 @@ below are `data`.
 Every `/api/live` request sends:
 
 ```
-Authorization: Bearer <DEVICE_TOKEN>
+Authorization: Bearer <device token>
 ```
+
+A device token is per user: the user creates one per recorder on the
+web app's **Devices** page (kind EXTENSION, DESKTOP or OTHER), copies it
+once (it is shown only at creation; it starts with `amsd_`) and pastes
+it into the recorder's "Device token" setting. Only its SHA-256 is
+stored, and it can be revoked there at any time.
 
 It is checked in one place, `backend/src/middleware/deviceAuth.middleware.ts`.
 
-| Backend `DEVICE_TOKEN` | Behaviour |
+| Request | Behaviour |
 | --- | --- |
-| set | missing or wrong token gives **401** |
-| unset, development | allowed; a warning is logged once |
-| unset, `NODE_ENV=production` | the backend **refuses to boot** |
+| Bearer token of an account, not revoked | runs as that account; the session and its meeting belong to it |
+| Bearer token unknown or revoked | **401**, even when a session cookie is also sent |
+| `Authorization` header that is not `Bearer <token>` | **401** |
+| no `Authorization` header, signed-in session cookie | runs as the signed-in user (the web app's Live page) |
+| no header, no session | **401** |
+| `/sessions/:id/...` of another account | **404**, exactly like a missing session; checked before the chunk is stored |
 
-The web page sends `VITE_DEVICE_TOKEN` if it is set. Recorders read the
-token from their own settings.
+Revocation is checked on every request (no cache), so a revoked token
+fails on its next call. The shared `DEVICE_TOKEN` of earlier versions is
+deprecated and no longer accepted. Recorders read the token from their
+own settings; the web page sends the session cookie instead.
 
 ## Audio
 
@@ -102,7 +113,8 @@ are there for the legacy web page.
 | session ended **more than 24 h ago** | **410** (a transcribed seq still gets 200 `duplicate: true`, at any age) | stop uploading; drop the chunk |
 | missing or invalid field | **400** | fix the request; don't retry unchanged |
 | upstream failure (Whisper, Gemini) | **502** | retry with backoff |
-| bad token | **401** | stop; fix configuration |
+| missing, unknown or revoked token | **401** | stop; ask for a new token from the Devices page |
+| unknown session, or one of another account | **404** | stop; start a new session |
 
 **Out-of-order chunks are fine.** Segment timestamps come from
 `startOffsetMs`, and each segment's `idx` is `seq * 1000 + i`, so the
