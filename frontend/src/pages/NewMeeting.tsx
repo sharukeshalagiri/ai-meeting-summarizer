@@ -1,19 +1,27 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { getErrorMessage, postData } from "../api/api";
-import type { Meeting, Summary, Transcript } from "../types/meeting";
-
-/** Stages run in this order; the UI marks earlier ones done. */
-const STAGES = [
-  { key: "upload", label: "Uploading" },
-  { key: "transcribe", label: "Transcribing" },
-  { key: "summarize", label: "Generating Summary" },
-  { key: "done", label: "Done" },
-] as const;
-
-type StageKey = (typeof STAGES)[number]["key"];
+import { retryProcessing, startProcessing } from "../api/w3-jobs";
+import ProgressSteps from "../components/progress/ProgressSteps";
+import {
+  failedStage,
+  failureMessage,
+  isActiveStage,
+  isFailed,
+} from "../components/progress/stages";
+import { useMeetingProgress } from "../components/progress/useMeetingProgress";
+import type { Meeting } from "../types/meeting";
+import type { MeetingProgress } from "../types/w3-jobs";
 
 const TEN_MINUTES = 10 * 60 * 1000;
+
+/**
+ * - upload: creating the meeting and sending the file (real progress)
+ * - processing: the pipeline runs as background jobs (POST /process
+ *   answers 202) and the page follows it over SSE
+ * - failed: queueing or a job failed; the meeting is kept, retry resumes
+ */
+type Phase = "idle" | "upload" | "processing" | "failed";
 
 function NewMeeting() {
   const navigate = useNavigate();
@@ -21,11 +29,45 @@ function NewMeeting() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [stage, setStage] = useState<StageKey | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
   const [uploadPercent, setUploadPercent] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [queuedStage, setQueuedStage] = useState<string | null>(null);
 
-  const loading = stage !== null;
+  const onSettled = useCallback(
+    (row: MeetingProgress) => {
+      if (isFailed(row)) {
+        setPhase("failed");
+        setError(failureMessage(row.processingError) ?? "Processing failed.");
+        return;
+      }
+
+      navigate(`/meeting/${row.id}`);
+    },
+    [navigate]
+  );
+
+  const { progress } = useMeetingProgress(meetingId ?? undefined, {
+    enabled: phase === "processing",
+    onSettled,
+  });
+
+  const busy = phase === "upload" || phase === "processing";
+
+  /** Queues (or re-queues) the pipeline; the hook follows it from there. */
+  const queue = async (id: string, run: typeof startProcessing) => {
+    try {
+      const state = await run(id);
+      setQueuedStage(state.processingStage);
+      setError(null);
+      setPhase("processing");
+    } catch (err) {
+      console.error(err);
+      setError(getErrorMessage(err));
+      setPhase("failed");
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,85 +79,47 @@ function NewMeeting() {
 
     setError(null);
     setUploadPercent(0);
+    setPhase("upload");
 
-    let meetingId: string | null = null;
+    let id: string;
 
     try {
-      // STEP 1 — create the meeting record
-      setStage("upload");
-
       const meeting = await postData<Meeting>("/meetings", {
         title,
         description,
       });
+      id = meeting.id;
+      setMeetingId(id);
 
-      meetingId = meeting.id;
-
-      // STEP 2 — upload the file only, so progress is real
+      // Upload only, so progress is real; the processing is queued next.
       const formData = new FormData();
       formData.append("audio", file);
 
-      await postData<Meeting>(
-        `/meetings/${meeting.id}/audio`,
-        formData,
-        {
-          headers: { "Content-Type": "multipart/form-data" },
-          timeout: TEN_MINUTES,
-          onUploadProgress: (event: {
-            loaded: number;
-            total?: number;
-          }) => {
-            if (event.total) {
-              setUploadPercent(
-                Math.round((event.loaded * 100) / event.total)
-              );
-            }
-          },
-        }
-      );
-
-      // STEP 3 — transcribe (Whisper)
-      setStage("transcribe");
-
-      await postData<Transcript>(
-        `/meetings/${meeting.id}/transcribe`,
-        undefined,
-        { timeout: 15 * 60 * 1000 }
-      );
-
-      // STEP 4 — summarize (Gemini)
-      setStage("summarize");
-
-      await postData<Summary>(
-        `/meetings/${meeting.id}/summarize`,
-        undefined,
-        { timeout: TEN_MINUTES }
-      );
-
-      setStage("done");
-
-      navigate(`/meeting/${meeting.id}`);
+      await postData<Meeting>(`/meetings/${id}/audio`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: TEN_MINUTES,
+        onUploadProgress: (event: { loaded: number; total?: number }) => {
+          if (event.total) {
+            setUploadPercent(Math.round((event.loaded * 100) / event.total));
+          }
+        },
+      });
     } catch (err) {
       console.error(err);
-
       setError(getErrorMessage(err));
-      setStage(null);
-
-      // The meeting exists but did not finish; let the user pick up
-      // from its detail page rather than losing the upload.
-      if (meetingId) {
-        setError(
-          (current) =>
-            `${current ?? ""}\n\nThe meeting was saved. You can open ` +
-            `it from the dashboard and retry.`
-        );
-      }
+      setPhase("idle");
+      return;
     }
+
+    await queue(id, startProcessing);
   };
 
-  const currentIndex = stage
-    ? STAGES.findIndex((s) => s.key === stage)
-    : -1;
+  const stage =
+    phase === "failed"
+      ? failedStage(progress?.processingError) ?? progress?.processingStage ?? queuedStage
+      : // Until the new run reports, the last row may still be the old failure.
+        (isActiveStage(progress?.processingStage) ? progress?.processingStage : null) ??
+        queuedStage;
 
   return (
     <div className="page">
@@ -139,7 +143,7 @@ function NewMeeting() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             required
-            disabled={loading}
+            disabled={busy || phase === "failed"}
           />
         </div>
 
@@ -150,7 +154,7 @@ function NewMeeting() {
             placeholder="Optional context for this meeting"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            disabled={loading}
+            disabled={busy || phase === "failed"}
           />
         </div>
 
@@ -160,7 +164,7 @@ function NewMeeting() {
             id="audio"
             type="file"
             accept=".mp3,.wav,.ogg,.m4a,.flac,.mp4,.mov,.mkv,.webm,.avi"
-            disabled={loading}
+            disabled={busy || phase === "failed"}
             onChange={(e) => {
               setFile(e.target.files?.[0] || null);
               setError(null);
@@ -180,59 +184,50 @@ function NewMeeting() {
         )}
 
         <div className="actions">
-          <button type="submit" disabled={loading}>
-            {loading ? "Processing..." : "Upload Meeting"}
-          </button>
+          {phase === "failed" && meetingId ? (
+            <>
+              <button type="button" onClick={() => void queue(meetingId, retryProcessing)}>
+                Retry processing
+              </button>
+              <Link to={`/meeting/${meetingId}`}>
+                <button type="button" className="secondary">
+                  Open the meeting
+                </button>
+              </Link>
+            </>
+          ) : (
+            <>
+              <button type="submit" disabled={busy}>
+                {busy ? "Processing..." : "Upload Meeting"}
+              </button>
 
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => navigate("/")}
-            disabled={loading}
-          >
-            Cancel
-          </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => navigate("/")}
+                disabled={phase === "upload"}
+              >
+                Cancel
+              </button>
+            </>
+          )}
         </div>
 
-        {loading && (
+        {phase !== "idle" && (
           <div className="card" style={{ marginTop: 20 }}>
-            <ol className="steps">
-              {STAGES.map((s, index) => {
-                const done = index < currentIndex;
-                const active = index === currentIndex;
+            <ProgressSteps
+              stage={phase === "upload" ? null : stage}
+              failed={phase === "failed"}
+              before={[
+                {
+                  label: "Uploading",
+                  done: phase !== "upload",
+                  detail: uploadPercent > 0 ? `${uploadPercent}%` : undefined,
+                },
+              ]}
+            />
 
-                return (
-                  <li
-                    key={s.key}
-                    className={`step ${done ? "step-done" : ""} ${
-                      active ? "step-active" : ""
-                    }`}
-                  >
-                    <span className="step-icon">
-                      {done ? (
-                        "✓"
-                      ) : active && s.key !== "done" ? (
-                        <span className="spinner" />
-                      ) : active ? (
-                        "✓"
-                      ) : (
-                        "○"
-                      )}
-                    </span>
-
-                    <span>
-                      {s.label}
-                      {active &&
-                        s.key === "upload" &&
-                        uploadPercent > 0 &&
-                        ` ${uploadPercent}%`}
-                    </span>
-                  </li>
-                );
-              })}
-            </ol>
-
-            {stage === "upload" && (
+            {phase === "upload" && (
               <div className="progress-track">
                 <div
                   className="progress-fill"
@@ -241,10 +236,14 @@ function NewMeeting() {
               </div>
             )}
 
-            <p className="muted" style={{ marginTop: 14, marginBottom: 0 }}>
-              Transcribing a long recording can take a few minutes.
-              Please keep this tab open.
-            </p>
+            {phase === "processing" && meetingId && (
+              <p className="muted" style={{ marginTop: 14, marginBottom: 0 }}>
+                Processing runs in the background and survives a server
+                restart, so you can leave this page.{" "}
+                <Link to={`/meeting/${meetingId}`}>Open the meeting</Link>{" "}
+                to follow it there.
+              </p>
+            )}
           </div>
         )}
       </form>
