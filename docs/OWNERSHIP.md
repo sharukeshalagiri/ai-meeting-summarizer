@@ -72,6 +72,15 @@ Everyone else uses the main checkout's on port 8000 (start it there with
   alone (no other track in parallel). w5-demo and w5-acc run after it
   and do not overlap each other. w3-jobs and w5-acc both list
   `w1-sum.service.ts`; they run in different steps.
+- Because it runs alone, **w4-acct** also gets minimal, named edits in
+  files other tracks built: the retention schedule in `jobs/`, the
+  owner's display name in the w2-spk speaker files, credentialed
+  requests in `useLiveCapture.ts` / `useMeetingProgress.ts` and the e2e
+  mock, a test setup file, and the prod compose/deploy env for
+  `SESSION_SECRET`/SMTP. In `app.ts` (CORS credentials) and `env.ts`
+  (`DEVICE_TOKEN` no longer required in production, `SESSION_SECRET` is)
+  it may change existing lines, not only append. Each edit is listed in
+  its PR body.
 - Files no track owns (for example `frontend/src/api/api.ts`,
   `backend/src/controllers/meeting.controller.ts`, `backend/src/lib/gemini.ts`)
   change only through "Requests for other tracks" in a PR. The integrator
@@ -195,6 +204,19 @@ w4-acct slot=10
   backend/src/services/speech.service.ts
   backend/src/services/w1-sum.service.ts
   backend/src/lib/dates/**
+  backend/vitest.config.mts
+  backend/test/setup*
+  backend/src/jobs/definitions.ts
+  backend/src/jobs/worker.ts
+  backend/src/services/diarization.service.ts
+  backend/src/services/speakers/attribute.ts
+  backend/src/services/speakers/speakers.service.ts
+  frontend/src/hooks/useLiveCapture.ts
+  frontend/src/components/progress/useMeetingProgress.ts
+  e2e/tests/mockApi.ts
+  docker-compose.prod.yml
+  deploy/.env.example
+  deploy/README.md
 
 w5-demo slot=11
   backend/src/demo/**
