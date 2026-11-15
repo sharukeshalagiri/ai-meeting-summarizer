@@ -257,6 +257,8 @@ export const env = {
   smtpFrom: optional("SMTP_FROM", "Meeting Companion <no-reply@localhost>"),
   /** How often the audio-retention job runs (cron, UTC). Hourly by default. */
   retentionCron: optional("RETENTION_CRON", "17 * * * *"),
+  /** ffmpeg binary for live assembly (w3-jobs); on PATH by default. */
+  ffmpegPath: optional("FFMPEG_PATH", "ffmpeg"),
 } as const;
 
 export type Env = typeof env;

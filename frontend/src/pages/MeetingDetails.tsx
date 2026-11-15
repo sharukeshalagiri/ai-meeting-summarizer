@@ -233,7 +233,15 @@ function MeetingDetails() {
 
       {running && (
         <div className="card" role="status">
-          <ProgressSteps stage={stage} />
+          <ProgressSteps
+            stage={stage}
+            before={
+              // The live final pass first joins the chunks into one recording.
+              meeting.source === "LIVE"
+                ? [{ label: "Assembling the recording", done: stage !== "ASSEMBLING" }]
+                : []
+            }
+          />
           <p className="muted tiny" style={{ marginBottom: 0 }}>
             This can take a few minutes; the page updates by itself.
           </p>

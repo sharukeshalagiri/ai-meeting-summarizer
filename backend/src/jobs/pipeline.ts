@@ -1,8 +1,11 @@
+import path from "path";
 import { logger } from "../lib/logger";
 import { getStorage, storageKeys } from "../lib/storage";
 import * as actionItemRepo from "../repositories/actionItem.repository";
+import * as liveRepo from "../repositories/liveSession.repository";
 import * as meetingRepo from "../repositories/meeting.repository";
 import * as segmentRepo from "../repositories/segment.repository";
+import * as profileRepo from "../repositories/speakerProfile.repository";
 import * as summaryRepo from "../repositories/summary.repository";
 import * as transcriptRepo from "../repositories/transcript.repository";
 import { BadRequest } from "../types/errors";
@@ -11,10 +14,11 @@ import { toSpeakerTranscript, type RawSegment } from "../types/segment";
 import { toJsonValue } from "../types/summary";
 import { diarizeSegments } from "../services/diarization.service";
 import { indexMeeting } from "../services/embedding.service";
-import { transcribeAudioDetailed } from "../services/speech.service";
+import { transcribeAudioDetailed, type TranscribeOptions } from "../services/speech.service";
 import { cleanSegments, generateSummary } from "../services/summary.service";
 import { resummarize } from "../services/w1-sum.service";
-import { Queues, type PipelineJob } from "./definitions";
+import { isLiveFinal, Queues, type PipelineJob } from "./definitions";
+import { carrySpeakers } from "./liveFinal";
 import { classifyError, formatFailure, PROCESSING_NOTES, SUMMARY_FAILED } from "./errors";
 import { enqueue } from "./index";
 import { setProgress, trySetProgress } from "./progress";
@@ -50,11 +54,15 @@ export const advance = async (
  *   the queue records the job failed;
  * - permanent: FAILED with the reason, and the job completes (a retry
  *   cannot help). The user retries from the page once the cause is fixed.
+ *
+ * `fallback` (the live final pass): instead of FAILED, once no retry is
+ * left, run it and complete. The live draft is still a usable meeting.
  */
 export const runStage = async (
   stage: string,
   job: JobContext<PipelineJob>,
-  work: () => Promise<void>
+  work: () => Promise<void>,
+  options: { fallback?: () => Promise<void> } = {}
 ): Promise<void> => {
   const { meetingId, origin } = job.data;
 
@@ -81,6 +89,11 @@ export const runStage = async (
       throw error;
     }
 
+    if (options.fallback) {
+      await options.fallback();
+      return;
+    }
+
     await trySetProgress(meetingId, {
       stage: ProcessingStage.FAILED,
       error: reason,
@@ -99,6 +112,52 @@ interface AsrArtifact {
   durationMs: number;
 }
 
+/**
+ * The live draft stays the meeting's transcript: summarize it (from
+ * CLEAN) with a note, or NO_SPEECH when there is no draft either. Used
+ * when a step of the live final pass cannot run.
+ */
+export const keepLiveDraft = async (job: PipelineJob): Promise<void> => {
+  const { meetingId } = job;
+
+  if ((await segmentRepo.countByMeetingId(meetingId)) === 0) {
+    await setProgress(meetingId, {
+      stage: ProcessingStage.NO_SPEECH,
+      error: null,
+      status: MeetingStatus.COMPLETED,
+    });
+    return;
+  }
+
+  log.warn("Live final pass skipped; summarizing the live draft", { meetingId });
+
+  await setProgress(meetingId, {
+    stage: ProcessingStage.CLEANING,
+    progress: 0,
+    error: PROCESSING_NOTES.LIVE_DRAFT_KEPT,
+    status: MeetingStatus.PROCESSING,
+  });
+  await enqueue(Queues.CLEAN, job, { singletonKey: meetingId });
+};
+
+/** The fallback a live final-pass step uses; none for other origins. */
+export const liveFallback = (job: PipelineJob) =>
+  isLiveFinal(job) ? { fallback: () => keepLiveDraft(job) } : {};
+
+/** ASR options for the live final pass: the session's layout and hints. */
+const liveTranscribeOptions = async (
+  job: PipelineJob & { sessionId: string }
+): Promise<TranscribeOptions> => {
+  const session = await liveRepo.findById(job.sessionId);
+
+  return {
+    meetingId: job.meetingId,
+    channelLayout: job.channelLayout ?? "mono",
+    hints: session?.hints ?? [],
+    roster: session?.roster ?? [],
+  };
+};
+
 /** TRANSCRIBING: Whisper over the stored recording, into a storage artifact. */
 export const transcribe = async (job: JobContext<PipelineJob>) =>
   runStage(ProcessingStage.TRANSCRIBING, job, async () => {
@@ -109,7 +168,9 @@ export const transcribe = async (job: JobContext<PipelineJob>) =>
     if (!meeting.audioPath) throw BadRequest("No audio uploaded for this meeting.");
 
     const startedAt = Date.now();
-    const result = await transcribeAudioDetailed(meeting.audioPath);
+    const result = isLiveFinal(job.data)
+      ? await transcribeAudioDetailed(meeting.audioPath, 0, await liveTranscribeOptions(job.data))
+      : await transcribeAudioDetailed(meeting.audioPath);
 
     const artifact: AsrArtifact = {
       text: result.text,
@@ -128,7 +189,7 @@ export const transcribe = async (job: JobContext<PipelineJob>) =>
     });
 
     await advance(job.data, Queues.DIARIZE, ProcessingStage.DIARIZING);
-  });
+  }, liveFallback(job.data));
 
 const readAsr = async (meetingId: string): Promise<AsrArtifact | null> => {
   const raw = await getStorage().get(storageKeys.asr(meetingId));
@@ -156,6 +217,11 @@ export const diarize = async (job: JobContext<PipelineJob>) =>
       return;
     }
 
+    if (isLiveFinal(job.data)) {
+      await commitLiveFinal(job.data, asr);
+      return;
+    }
+
     const diarized = asr.segments.length ? await diarizeSegments(asr.segments) : [];
 
     await transcriptRepo.upsert(meetingId, asr.text);
@@ -179,7 +245,75 @@ export const diarize = async (job: JobContext<PipelineJob>) =>
     await advance(job.data, Queues.CLEAN, ProcessingStage.CLEANING, {
       status: MeetingStatus.TRANSCRIBED,
     });
+  }, liveFallback(job.data));
+
+/**
+ * DIARIZING for the live final pass: the final segments replace the live
+ * draft, with speakers carried over from it (liveFinal.ts), so renames
+ * survive. Segments with no draft counterpart are attributed against the
+ * meeting's SpeakerProfiles (MANUAL names are never overwritten there).
+ * An empty final transcript never replaces a draft that has speech.
+ */
+const commitLiveFinal = async (
+  job: PipelineJob & { sessionId: string },
+  asr: AsrArtifact
+): Promise<void> => {
+  const { meetingId } = job;
+  const draft = await segmentRepo.findByMeetingId(meetingId);
+
+  if (asr.segments.length === 0) {
+    await keepLiveDraft(job);
+    return;
+  }
+
+  const { segments, uncovered } = carrySpeakers(asr.segments, draft);
+
+  if (uncovered.length > 0) {
+    const [meeting, session] = await Promise.all([
+      meetingRepo.findById(meetingId),
+      liveRepo.findById(job.sessionId),
+    ]);
+    const attributed = await diarizeSegments(
+      uncovered.map((position) => asr.segments[position]),
+      {
+        meetingId,
+        filePath: meeting?.audioPath ? path.resolve(meeting.audioPath) : null,
+        channelLayout: job.channelLayout ?? "mono",
+        offsetMs: 0,
+        roster: session?.roster ?? [],
+      }
+    );
+    uncovered.forEach((position, i) => {
+      segments[position] = attributed[i] ?? { ...asr.segments[position], speaker: "Speaker 1" };
+    });
+  }
+
+  log.info("Live final pass: replacing the draft", {
+    meetingId,
+    draftSegments: draft.length,
+    finalSegments: segments.length,
+    carried: segments.length - uncovered.length,
   });
+
+  await transcriptRepo.upsert(meetingId, asr.text);
+  await segmentRepo.replaceForMeeting(meetingId, segments);
+
+  // replaceForMeeting numbers the rows 0..n-1 in this order.
+  await profileRepo.assignSegments(
+    meetingId,
+    segments.flatMap((segment, idx) =>
+      segment.speakerId ? [{ idx, speakerId: segment.speakerId }] : []
+    )
+  );
+
+  if (asr.durationMs > 0) {
+    await meetingRepo.updateDuration(meetingId, Math.round(asr.durationMs / 1000));
+  }
+
+  await advance(job, Queues.CLEAN, ProcessingStage.CLEANING, {
+    status: MeetingStatus.TRANSCRIBED,
+  });
+};
 
 /** CLEANING: noise labels (CLEAN pass) stored per segment. */
 export const clean = async (job: JobContext<PipelineJob>) =>

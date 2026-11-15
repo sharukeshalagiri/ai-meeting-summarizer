@@ -3,7 +3,6 @@ import { startJobs, stopJobs } from "./jobs/index";
 import { env } from "./lib/env";
 import { logger } from "./lib/logger";
 import { prisma } from "./lib/prisma";
-import { reapStaleSessions } from "./services/live.service";
 
 const app = createApp();
 
@@ -15,23 +14,10 @@ const server = app.listen(env.port, () => {
 });
 
 /**
- * A browser tab can close without reaching the stop endpoint, which
- * would leave a live session ACTIVE and its meeting without a summary.
- * This sweeps up anything that stopped sending audio.
- */
-const REAP_INTERVAL_MS = 5 * 60 * 1000;
-
-const reaper = setInterval(() => {
-  void reapStaleSessions().catch((error) => {
-    logger.error("Stale session sweep failed", error);
-  });
-}, REAP_INTERVAL_MS);
-
-// Do not hold the event loop open on an otherwise idle process.
-reaper.unref();
-
-/**
- * The job queue and its workers run in this process (w3-jobs). A queue
+ * The job queue and its workers run in this process (w3-jobs). The
+ * stale live-session sweep is one of its scheduled jobs (live-reap,
+ * every 5 minutes), so it runs once per tick even with several
+ * processes, and not at all while the queue is down. A queue
  * that cannot start (database down, pg-boss schema locked) does not take
  * the API down with it: the HTTP server keeps serving reads, job routes
  * answer 503, GET /api/health/ready reports 503, and the start is retried
@@ -72,7 +58,6 @@ const shutdown = async (signal: string): Promise<void> => {
 
   logger.info("Shutting down", { signal });
 
-  clearInterval(reaper);
   if (jobsRetry) clearTimeout(jobsRetry);
 
   server.close(() => {

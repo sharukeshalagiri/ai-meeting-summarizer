@@ -18,6 +18,8 @@ import { AppError, BadRequest, NotFound } from "../types/errors";
 import { MeetingStatus, ProcessingStage } from "../types/meeting";
 import { toSpeakerTranscript } from "../types/segment";
 import { toRollingJsonValue } from "../types/summary";
+import { Queues, type LateJob } from "../jobs/definitions";
+import { assertJobsAvailable, enqueue } from "../jobs/index";
 import { diarizeSegments } from "./diarization.service";
 import { linkSegmentSpeakers } from "./speakers/attribute";
 import * as meetingService from "./meeting.service";
@@ -337,9 +339,9 @@ const removeFile = (filePath: string) =>
 export const LATE_CHUNK_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Debounce before re-summarizing after a late chunk. A backlog arrives
- * as a burst, and each chunk resets the timer, so the burst costs one
- * summary rather than one per chunk.
+ * Quiet time before re-running the final pass after late chunks. A
+ * backlog arrives as a burst, and every chunk pushes the run back, so a
+ * burst costs one pass rather than one per chunk.
  */
 export const LATE_RESUMMARY_DELAY_MS = 2 * 60 * 1000;
 
@@ -348,44 +350,36 @@ const acceptsLateChunks = (endedAt: Date | null | undefined): boolean =>
   Date.now() - new Date(endedAt).getTime() <= LATE_CHUNK_WINDOW_MS;
 
 /**
- * Pending re-summaries, by session id. In memory on purpose (like the
- * background summary itself): a restart during the debounce loses the
- * timer and the summary stays stale until another chunk arrives.
- * w3-jobs (pg-boss) makes this durable; see docs/decisions/chore-pair-2.md.
+ * Queues the delayed late-chunk pass (live-late, keyed by session). It is
+ * a pg-boss job, so a restart during the wait no longer loses it. While
+ * one is waiting, another send is dropped (singleton); the job itself
+ * pushes the run back until the session has been quiet for the delay.
  */
-const resummaryTimers = new Map<string, NodeJS.Timeout>();
+export const scheduleLatePass = async (
+  sessionId: string,
+  meetingId: string,
+  delayMs = LATE_RESUMMARY_DELAY_MS
+): Promise<void> => {
+  await enqueue(
+    Queues.LIVE_LATE,
+    { sessionId, meetingId } satisfies LateJob,
+    {
+      singletonKey: sessionId,
+      startAfterSeconds: Math.max(1, Math.ceil(delayMs / 1000)),
+    }
+  );
+};
 
 /**
- * (Re)starts the debounce for re-summarizing an ended session's meeting.
- * Each call resets the timer, so it fires once, after the last chunk.
+ * Kept for older tests: late re-summaries are jobs now, so there is no
+ * in-process timer left to cancel.
  */
-export const scheduleResummary = (sessionId: string): void => {
-  const pending = resummaryTimers.get(sessionId);
-  if (pending) clearTimeout(pending);
-
-  const timer = setTimeout(() => {
-    resummaryTimers.delete(sessionId);
-    void resummarizeEnded(sessionId).catch((error) =>
-      log.error("Late re-summary failed", error, { sessionId })
-    );
-  }, LATE_RESUMMARY_DELAY_MS);
-
-  // A pending re-summary must not keep the process (or a test) alive.
-  timer.unref?.();
-
-  resummaryTimers.set(sessionId, timer);
-};
-
-/** Drops every pending re-summary (tests and shutdown). */
-export const cancelScheduledResummaries = (): void => {
-  for (const timer of resummaryTimers.values()) clearTimeout(timer);
-  resummaryTimers.clear();
-};
+export const cancelScheduledResummaries = (): void => undefined;
 
 /**
  * Writes the meeting's flat transcript from its segments and marks it
- * TRANSCRIBED. Shared by /end and the late-chunk re-summary, so both
- * build the transcript the same way.
+ * TRANSCRIBED. Shared by /end and the late-chunk pass, so both build the
+ * transcript the same way.
  */
 const writeTranscript = async (
   meetingId: string,
@@ -405,25 +399,37 @@ const writeTranscript = async (
 };
 
 /**
- * Rebuilds an ended session's transcript and duration from its segments
- * (late chunks included) and starts the summary again. A summary that is
- * still running would not pick the new segments up, so it waits another
- * debounce period instead.
+ * The live-late job: runs once the session has had no chunk for
+ * LATE_RESUMMARY_DELAY_MS and no pipeline step is running for the
+ * meeting; otherwise it queues itself again for the remaining time.
+ * Then the draft transcript is rebuilt from all segments (late ones
+ * included) and the final pass runs again, so the late audio is in the
+ * recording, the transcript and the summary.
  */
-const resummarizeEnded = async (sessionId: string): Promise<void> => {
+export const lateFinalPass = async (
+  sessionId: string,
+  now = Date.now()
+): Promise<"postponed" | "started" | "skipped"> => {
   const session = await liveRepo.findById(sessionId);
-  if (!session) return;
+  if (!session) return "skipped";
 
-  if (meetingService.summaryJob(session.meetingId)) {
-    log.info("Summary still running; late re-summary postponed", {
-      sessionId,
-    });
-    scheduleResummary(sessionId);
-    return;
+  const lastChunkAt = session.lastChunkAt ? new Date(session.lastChunkAt).getTime() : null;
+  const quietFor = lastChunkAt === null ? Infinity : now - lastChunkAt;
+
+  if (quietFor < LATE_RESUMMARY_DELAY_MS) {
+    await scheduleLatePass(sessionId, session.meetingId, LATE_RESUMMARY_DELAY_MS - quietFor);
+    return "postponed";
+  }
+
+  // A running pass would not pick the new segments up.
+  if (await meetingService.isProcessing(session.meetingId)) {
+    log.info("Pipeline still running; late pass postponed", { sessionId });
+    await scheduleLatePass(sessionId, session.meetingId);
+    return "postponed";
   }
 
   const segments = await segmentRepo.findByMeetingId(session.meetingId);
-  if (segments.length === 0) return;
+  if (segments.length === 0) return "skipped";
 
   await meetingRepo.updateDuration(
     session.meetingId,
@@ -433,13 +439,14 @@ const resummarizeEnded = async (sessionId: string): Promise<void> => {
   // Also recovers a meeting that ended with no speech (NO_SPEECH).
   await writeTranscript(session.meetingId, segments);
 
-  log.info("Re-summarizing after late chunks", {
+  log.info("Final pass again after late chunks", {
     sessionId,
     meetingId: session.meetingId,
     segments: segments.length,
   });
 
-  await meetingService.startSummary(session.meetingId);
+  await queueFinalPass(session, "late");
+  return "started";
 };
 
 /** Thrown while another upload of the same chunk is being processed. */
@@ -488,6 +495,18 @@ export const ingestContractChunk = async (input: {
   if (session.status !== "ACTIVE" && !acceptsLateChunks(session.endedAt)) {
     await removeFile(input.filePath);
     throw new AppError("This live session has already ended.", 410);
+  }
+
+  // A late chunk must be able to queue its re-run. Checked before any
+  // work, so the recorder's retry (it retries 5xx) finds nothing half
+  // done; an ACTIVE session's chunk does not need the queue.
+  if (session.status !== "ACTIVE") {
+    try {
+      assertJobsAvailable();
+    } catch (error) {
+      await removeFile(input.filePath);
+      throw error;
+    }
   }
 
   const fields = {
@@ -613,16 +632,18 @@ export const ingestContractChunk = async (input: {
       duplicate: false,
     };
 
+    // Silent chunks add nothing to summarize, so they never schedule.
+    // Queued before the chunk counts as done: if queuing fails the
+    // chunk is FAILED, and the recorder's retry schedules it again.
+    if (ended && segments.length > 0) {
+      await scheduleLatePass(session.id, session.meetingId);
+    }
+
     await chunkRepo.markTranscribed(
       chunkId,
       segments.length,
       response as unknown as Prisma.InputJsonObject
     );
-
-    // Silent chunks add nothing to summarize, so they never schedule.
-    if (ended && segments.length > 0) {
-      scheduleResummary(session.id);
-    }
 
     log.debug("Contract chunk ingested", {
       sessionId: session.id,
@@ -678,35 +699,43 @@ export const getSessionState = async (meetingId: string) => {
 };
 
 /**
- * Ends a capture and starts the final meeting report (in the background;
- * the response does not wait for it).
- *
- * The accumulated segments become the meeting's transcript, which then
- * flows through the same summarization path as an uploaded recording,
- * so live and uploaded meetings end up identical in the database.
+ * Queues what turns an ended session into the final meeting:
+ * - contract chunks on record: the live final pass (live-assemble: one
+ *   recording from the chunks, then the full pipeline on it);
+ * - legacy web-page sessions (no LiveChunk rows, files deleted): the
+ *   summary of the draft, as before.
  */
-export const endSession = async (sessionId: string) => {
-  const session = await getActiveSession(sessionId);
+const queueFinalPass = async (
+  session: { id: string; meetingId: string },
+  origin: "live-final" | "late"
+): Promise<void> => {
+  const chunks = await chunkRepo.findBySession(session.id);
 
-  if (session.status === "ENDED") {
-    // Ending twice is a normal race: the tab can close just as the
-    // user clicks stop. Return what already exists.
-    return {
-      meetingId: session.meetingId,
-      alreadyEnded: true,
-      summary: null,
-    };
+  if (chunks.length > 0) {
+    await meetingService.startLiveFinal(session.meetingId, session.id, origin);
+  } else {
+    await meetingService.startSummary(session.meetingId);
   }
+};
 
-  await liveRepo.end(session.id);
-
+/**
+ * Writes the draft transcript (or NO_SPEECH) for an ended session and
+ * queues its final pass. Shared by /end and a repeated /end that finds
+ * the pass never queued.
+ */
+const finalizeEnded = async (session: {
+  id: string;
+  meetingId: string;
+}): Promise<{ summarizing: boolean; segments: number }> => {
   const segments = await segmentRepo.findByMeetingId(session.meetingId);
 
-  const durationSec = Math.round(session.elapsedMs / 1000);
+  // A FAILED chunk (Whisper was down during the meeting, say) still has
+  // its audio, which the final pass transcribes from the recording.
+  const recoverable =
+    segments.length === 0 &&
+    (await chunkRepo.findBySession(session.id)).some((chunk) => chunk.status === "FAILED");
 
-  await meetingRepo.markEnded(session.meetingId, durationSec);
-
-  if (segments.length === 0) {
+  if (segments.length === 0 && !recoverable) {
     // Nothing was captured: usually the wrong tab was shared, or it was
     // silent throughout. That is not a processing failure, so the
     // meeting is COMPLETED with stage NO_SPEECH (no retry offered). A
@@ -717,36 +746,89 @@ export const endSession = async (sessionId: string) => {
       status: MeetingStatus.COMPLETED,
     });
 
-    log.warn("Live session ended with no speech", {
-      sessionId: session.id,
-    });
+    log.warn("Live session ended with no speech", { sessionId: session.id });
+
+    return { summarizing: false, segments: 0 };
+  }
+
+  if (segments.length > 0) await writeTranscript(session.meetingId, segments);
+
+  await queueFinalPass(session, "live-final");
+
+  return { summarizing: true, segments: segments.length };
+};
+
+/**
+ * Ends a capture and queues the final meeting report (the response does
+ * not wait for it).
+ *
+ * The live draft (the chunks' segments) becomes the transcript at once.
+ * Then the chunks are assembled into one stereo recording and the full
+ * upload pipeline runs on it; its transcript replaces the draft with
+ * speakers (and the user's renames) carried over. The meeting page
+ * follows the stages over GET /meetings/:id/events.
+ *
+ * While the queue is down this answers 503 **before writing anything**:
+ * the session stays ACTIVE and the recorder's retry of /end (both
+ * recorders retry 5xx) is a fresh, complete /end. A repeated /end on an
+ * ENDED session whose final pass was never queued (processingStage
+ * still null: the queue failed between the writes and the enqueue)
+ * queues it then.
+ */
+export const endSession = async (sessionId: string) => {
+  const session = await getActiveSession(sessionId);
+
+  if (session.status === "ENDED") {
+    // Ending twice is a normal race: the tab can close just as the
+    // user clicks stop. Return what already exists.
+    const progress = await meetingRepo.findProgress(session.meetingId);
+
+    if (
+      progress &&
+      progress.processingStage == null &&
+      !(await meetingService.isProcessing(session.meetingId))
+    ) {
+      log.warn("Ended session without a final pass; queuing it now", {
+        sessionId: session.id,
+      });
+      const { summarizing } = await finalizeEnded(session);
+      return {
+        meetingId: session.meetingId,
+        alreadyEnded: true,
+        summary: null,
+        summarizing,
+      };
+    }
 
     return {
       meetingId: session.meetingId,
-      alreadyEnded: false,
+      alreadyEnded: true,
       summary: null,
     };
   }
 
-  await writeTranscript(session.meetingId, segments);
+  assertJobsAvailable();
+
+  await liveRepo.end(session.id);
+
+  const durationSec = Math.round(session.elapsedMs / 1000);
+
+  await meetingRepo.markEnded(session.meetingId, durationSec);
+
+  const { summarizing, segments } = await finalizeEnded(session);
 
   log.info("Live session ended", {
     sessionId: session.id,
     meetingId: session.meetingId,
-    segments: segments.length,
+    segments,
     durationSec,
   });
-
-  // Reuses the upload pipeline's summarization, so the final report is
-  // generated exactly one way. It runs in the background (it can take
-  // minutes); the meeting page polls GET /meetings/:id for the result.
-  await meetingService.startSummary(session.meetingId);
 
   return {
     meetingId: session.meetingId,
     alreadyEnded: false,
     summary: null,
-    summarizing: true,
+    ...(summarizing ? { summarizing: true } : {}),
   };
 };
 

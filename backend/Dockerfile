@@ -33,8 +33,11 @@ RUN npm run build \
  && npm cache clean --force
 
 FROM ${NODE_IMAGE} AS runtime
+# ffmpeg: live assembly joins a session's chunks into one recording
+# (src/jobs/assemble.ts, FFMPEG_PATH). Without it the final pass falls
+# back to summarizing the live draft.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl tini \
+ && apt-get install -y --no-install-recommends openssl tini ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PORT=5000 \

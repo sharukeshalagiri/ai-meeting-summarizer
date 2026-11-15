@@ -19,6 +19,7 @@ interface Session {
   elapsedMs: number;
   lastRollingAtMs: number;
   endedAt: Date | null;
+  lastChunkAt: Date | null;
 }
 
 interface FakeMeeting {
@@ -70,8 +71,10 @@ export const store = {
   transcribeOptions: [] as unknown[],
   /** When true, fake segments carry channel "remote" and word timings. */
   withWords: false,
-  /** Meetings startSummary was called for. */
+  /** Meetings startSummary was called for (legacy sessions, no chunk rows). */
   summariesStarted: [] as string[],
+  /** startLiveFinal calls: the live final pass (assemble + pipeline). */
+  finalPasses: [] as { meetingId: string; sessionId: string; origin: string }[],
   /** When set, the next transcription waits for this promise. */
   gate: null as Promise<void> | null,
   failNext: false,
@@ -91,6 +94,7 @@ export const reset = () => {
   store.transcribeOptions = [];
   store.withWords = false;
   store.summariesStarted = [];
+  store.finalPasses = [];
   store.gate = null;
   store.failNext = false;
 };
@@ -114,6 +118,13 @@ export const meetingService = {
   },
   summaryJob: (meetingId: string) =>
     store.runningSummaries.has(meetingId) ? Promise.resolve() : undefined,
+  /** "A pipeline step is queued or running" (the late pass waits for it). */
+  isProcessing: async (meetingId: string) => store.runningSummaries.has(meetingId),
+  startLiveFinal: async (meetingId: string, sessionId: string, origin: string) => {
+    // Like startSummary, leaves the meeting row alone.
+    store.finalPasses.push({ meetingId, sessionId, origin });
+    return { meetingId, status: "PROCESSING", processingStage: "ASSEMBLING" };
+  },
 };
 
 export const meetingRepo = {
@@ -129,6 +140,19 @@ export const meetingRepo = {
   updateDuration: async (id: string, durationSec: number) => {
     const meeting = store.meetings.get(id);
     if (meeting) meeting.durationSec = durationSec;
+  },
+  findProgress: async (id: string) => {
+    const meeting = store.meetings.get(id);
+    return meeting
+      ? {
+          id,
+          status: meeting.status,
+          source: "LIVE",
+          processingStage: meeting.processingStage ?? null,
+          processingProgress: null,
+          processingError: meeting.processingError ?? null,
+        }
+      : null;
   },
   updateStatus: async (id: string, status: string) => {
     const meeting = store.meetings.get(id);
@@ -171,6 +195,7 @@ export const liveSessionRepo = {
       elapsedMs: 0,
       lastRollingAtMs: 0,
       endedAt: null,
+      lastChunkAt: null,
     };
     store.sessions.set(session.id, session);
     return session;
@@ -185,12 +210,14 @@ export const liveSessionRepo = {
     const session = store.sessions.get(id)!;
     session.chunkCount += 1;
     session.elapsedMs += durationMs;
+    session.lastChunkAt = new Date();
     return session;
   },
   recordContractChunk: async (id: string, endMs: number) => {
     const session = store.sessions.get(id)!;
     session.chunkCount += 1;
     session.elapsedMs = Math.max(session.elapsedMs, endMs);
+    session.lastChunkAt = new Date();
     return { ...session };
   },
   end: async (id: string) => {
@@ -205,6 +232,10 @@ export const liveSessionRepo = {
 };
 
 export const liveChunkRepo = {
+  findBySession: async (sessionId: string) =>
+    store.chunks
+      .filter((c) => c.sessionId === sessionId)
+      .sort((a, b) => a.seq - b.seq),
   findBySeq: async (sessionId: string, seq: number) =>
     store.chunks.find((c) => c.sessionId === sessionId && c.seq === seq) ??
     null,

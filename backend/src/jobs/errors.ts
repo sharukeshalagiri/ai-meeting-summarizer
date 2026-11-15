@@ -107,6 +107,9 @@ export class PermanentJobError extends AppError {
 export const PROCESSING_NOTES = {
   V2_FALLBACK:
     "The detailed summary could not be generated, so a basic summary was used instead.",
+  /** Live final pass (assemble, re-transcribe) failed: the draft is used. */
+  LIVE_DRAFT_KEPT:
+    "The full recording could not be processed again, so the summary uses the live transcript.",
 } as const;
 
 /** processingError when the summary fails for an unexpected reason. */
