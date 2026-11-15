@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import fs from "fs";
 import multer, { MulterError } from "multer";
 import path from "path";
@@ -26,7 +27,10 @@ const storageIn = (directory: string) =>
         "_"
       );
 
-      cb(null, `${Date.now()}-${safeName}`);
+      // The random part keeps two uploads of the same name in the same
+      // millisecond (two recorders, or parallel test files sharing
+      // LIVE_CHUNK_DIR) from overwriting each other's file.
+      cb(null, `${Date.now()}-${randomUUID().slice(0, 8)}-${safeName}`);
     },
   });
 
