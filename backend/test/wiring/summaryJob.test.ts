@@ -114,6 +114,10 @@ const deferredV2 = () => {
     finish = resolve;
     fail = reject;
   });
+  // The queued job may only await this after the test calls fail(): mark
+  // it handled so an early rejection is not reported as unhandled. The
+  // job's own await still sees the rejection.
+  done.catch(() => undefined);
   store.v2 = () => done;
   return { finish, fail };
 };
