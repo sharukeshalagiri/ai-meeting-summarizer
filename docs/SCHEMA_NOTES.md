@@ -101,3 +101,50 @@ seq])` is what makes uploads idempotent.
 | `error` | String? | Last failure message (FAILED). |
 | `segmentCount` | Int, default 0 | Segments produced. |
 | `result` | Json? | The response body, replayed for duplicate uploads. |
+
+## Accounts, devices, series (w4-acct)
+
+Migration `20261115120000_w4_accounts`. Additive only: new tables, new
+nullable or defaulted columns, new indexes. Existing rows keep working;
+the existing dev user gets a password from the CLI
+(`npm --prefix backend run user:password`).
+
+### User (new columns)
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `passwordHash` | String? | argon2id hash. Null = cannot sign in until a password is set. |
+| `displayName` | String? | The user's own label for mic-channel segments ("You" when null). |
+| `timezone` | String? | IANA zone for resolving spoken dates; null = UTC. |
+| `defaultMode` | String, default `AUTO` | Mode used when a meeting arrives without one or with `AUTO`. |
+| `transcriptionProvider` | String? | `local` \| `deepgram`; null = the server's `TRANSCRIPTION_PROVIDER`. |
+| `glossary` | String[], default `[]` | Personal vocabulary, added to transcription and summary hints. |
+| `audioRetention` | String, default `KEEP` | `KEEP` \| `AFTER_PROCESSING` \| `AFTER_DAYS`. Enforced by the scheduled retention job. |
+| `audioRetentionDays` | Int? | N for `AFTER_DAYS`. |
+
+### Session (new)
+
+express-session store. `sid` (PK), `data` (Json), `expiresAt`, `userId?`
+(set once logged in, cascade), `createdAt`, `updatedAt`.
+
+### DeviceToken (new)
+
+Per-user Bearer token for a recorder, replacing the shared
+`DEVICE_TOKEN`. Only `tokenHash` (SHA-256, unique) is stored; the token
+is shown once. `name`, `kind` (`EXTENSION` \| `DESKTOP` \| `OTHER`),
+`prefix` (for display), `lastUsedAt?`, `revokedAt?` (revoked = rejected).
+
+### Series (new) and Meeting.seriesId
+
+`Series { userId, name }`, unique per user. `Meeting.seriesId?` (on
+delete: set null) links a meeting to its series; "Since last time"
+compares a meeting with the previous one in its series. The result is
+stored in `Summary.data.sinceLastTime`, so it needs no column.
+
+### Meeting.audioDeletedAt, ChatMessage.userId
+
+- `Meeting.audioDeletedAt?`: when the retention job removed the
+  recording (`audioPath` is then null).
+- `ChatMessage.userId?` (cascade): owner of a chat thread. Workspace-wide
+  threads have no meeting, so this is what scopes them. Null for rows
+  written before accounts; those are not shown to anyone.
