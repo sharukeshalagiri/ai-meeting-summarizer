@@ -1,4 +1,5 @@
 import path from "path";
+import type { Prisma } from "@prisma/client";
 import { logger } from "../lib/logger";
 import { getStorage, storageKeys } from "../lib/storage";
 import * as actionItemRepo from "../repositories/actionItem.repository";
@@ -18,7 +19,7 @@ import { transcribeAudioDetailed, type TranscribeOptions } from "../services/spe
 import { cleanSegments, generateSummary } from "../services/summary.service";
 import { resummarize } from "../services/w1-sum.service";
 import { isLiveFinal, Queues, type PipelineJob } from "./definitions";
-import { carrySpeakers } from "./liveFinal";
+import { carrySpeakers, remapEvidence } from "./liveFinal";
 import { classifyError, formatFailure, PROCESSING_NOTES, SUMMARY_FAILED } from "./errors";
 import { enqueue } from "./index";
 import { setProgress, trySetProgress } from "./progress";
@@ -248,6 +249,40 @@ export const diarize = async (job: JobContext<PipelineJob>) =>
   }, liveFallback(job.data));
 
 /**
+ * The final pass renumbers segments (0..n-1), but the summarize step
+ * keeps human-reviewed action items as they are, so their evidence
+ * would still name draft idx values (seq * 1000 + i) and jumpToSegment
+ * would land nowhere. Every action item's evidence is re-pointed by
+ * time (liveFinal.ts remapEvidence) right after the new segments are
+ * written; the ones the summary regenerates are replaced anyway.
+ */
+const remapActionItemEvidence = async (
+  meetingId: string,
+  draft: { idx: number; startMs: number }[],
+  finals: { startMs: number; endMs: number }[]
+): Promise<void> => {
+  const items = await actionItemRepo.findByMeetingId(meetingId);
+  if (items.length === 0) return;
+
+  const draftStartByIdx = new Map(draft.map((segment) => [segment.idx, segment.startMs]));
+  const finalSegments = finals.map((segment, idx) => ({
+    idx,
+    startMs: segment.startMs,
+    endMs: segment.endMs,
+  }));
+
+  let remapped = 0;
+  for (const item of items) {
+    const evidence = remapEvidence(item.evidence, draftStartByIdx, finalSegments);
+    if (!evidence) continue;
+    await actionItemRepo.updateEvidence(item.id, evidence as Prisma.InputJsonValue);
+    remapped++;
+  }
+
+  if (remapped > 0) log.info("Action item evidence re-pointed", { meetingId, remapped });
+};
+
+/**
  * DIARIZING for the live final pass: the final segments replace the live
  * draft, with speakers carried over from it (liveFinal.ts), so renames
  * survive. Segments with no draft counterpart are attributed against the
@@ -305,6 +340,8 @@ const commitLiveFinal = async (
       segment.speakerId ? [{ idx, speakerId: segment.speakerId }] : []
     )
   );
+
+  await remapActionItemEvidence(meetingId, draft, segments);
 
   if (asr.durationMs > 0) {
     await meetingRepo.updateDuration(meetingId, Math.round(asr.durationMs / 1000));

@@ -86,3 +86,68 @@ export const carrySpeakers = (
 
   return { segments, uncovered };
 };
+
+/** A segment of the final transcript, by its new idx. */
+export interface FinalSegment {
+  idx: number;
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * The final segment for a moment: the one that contains it, else the
+ * nearest one (pure). Null only when there are no segments.
+ */
+export const segmentAt = (segments: FinalSegment[], atMs: number): FinalSegment | null => {
+  let best: FinalSegment | null = null;
+  let bestDistance = Infinity;
+
+  for (const segment of segments) {
+    if (atMs >= segment.startMs && atMs < segment.endMs) return segment;
+    const distance = atMs < segment.startMs ? segment.startMs - atMs : atMs - segment.endMs;
+    if (distance < bestDistance) {
+      best = segment;
+      bestDistance = distance;
+    }
+  }
+
+  return best;
+};
+
+/**
+ * Re-points stored evidence (`[{ idx, startMs?, ... }]`) from draft idx
+ * values to the final transcript's idx (pure), so jumpToSegment on a
+ * surviving action item still lands where it was said. Each entry's
+ * moment is its own `startMs`, else the draft segment's start (captured
+ * before the draft was replaced). The entry gets the final segment that
+ * covers that moment (or the nearest) and keeps `startMs`, so a later
+ * pass (late chunks) can remap it again. Entries with no known moment
+ * are left as they are. Returns null when nothing changed.
+ */
+export const remapEvidence = (
+  evidence: unknown,
+  draftStartByIdx: ReadonlyMap<number, number>,
+  finals: FinalSegment[]
+): Record<string, unknown>[] | null => {
+  if (!Array.isArray(evidence) || finals.length === 0) return null;
+
+  let changed = false;
+
+  const remapped = evidence.map((raw: unknown) => {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const entry = raw as Record<string, unknown>;
+    if (typeof entry.idx !== "number") return entry;
+
+    const atMs =
+      typeof entry.startMs === "number" ? entry.startMs : draftStartByIdx.get(entry.idx);
+    if (atMs === undefined) return entry;
+
+    const target = segmentAt(finals, atMs);
+    if (!target) return entry;
+
+    if (target.idx !== entry.idx || entry.startMs !== atMs) changed = true;
+    return { ...entry, idx: target.idx, startMs: atMs };
+  });
+
+  return changed ? (remapped as Record<string, unknown>[]) : null;
+};

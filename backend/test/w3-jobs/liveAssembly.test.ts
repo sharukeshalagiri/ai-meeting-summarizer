@@ -14,7 +14,7 @@ import {
   type AssembleDeps,
   type ChunkSource,
 } from "../../src/jobs/assemble";
-import { carrySpeakers } from "../../src/jobs/liveFinal";
+import { carrySpeakers, remapEvidence, segmentAt } from "../../src/jobs/liveFinal";
 import { LocalStorage } from "../../src/lib/storage/local";
 
 /**
@@ -242,5 +242,41 @@ describe("carrySpeakers", () => {
       draft
     );
     expect(uncovered).toEqual([0]);
+  });
+});
+
+describe("remapEvidence", () => {
+  const finals = [
+    { idx: 0, startMs: 0, endMs: 1000 },
+    { idx: 1, startMs: 1200, endMs: 3000 },
+  ];
+
+  it("finds the containing segment, else the nearest", () => {
+    expect(segmentAt(finals, 1500)?.idx).toBe(1);
+    expect(segmentAt(finals, 1050)?.idx).toBe(0);
+    expect(segmentAt(finals, 9000)?.idx).toBe(1);
+    expect(segmentAt([], 10)).toBeNull();
+  });
+
+  it("re-points by the entry's startMs, else the draft segment's, and leaves unknown moments", () => {
+    const draft = new Map([[2001, 1300]]);
+    expect(
+      remapEvidence(
+        [{ idx: 2001, quote: "q" }, { idx: 5, startMs: 100 }, { idx: 7000 }, "junk"],
+        draft,
+        finals
+      )
+    ).toEqual([
+      { idx: 1, quote: "q", startMs: 1300 },
+      { idx: 0, startMs: 100 },
+      { idx: 7000 },
+      "junk",
+    ]);
+  });
+
+  it("returns null when nothing changes or there is no evidence", () => {
+    expect(remapEvidence([{ idx: 0, startMs: 10 }], new Map(), finals)).toBeNull();
+    expect(remapEvidence(null, new Map(), finals)).toBeNull();
+    expect(remapEvidence([{ idx: 3, startMs: 10 }], new Map(), [])).toBeNull();
   });
 });

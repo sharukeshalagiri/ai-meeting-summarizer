@@ -151,6 +151,17 @@ export const updateReviewed = (
 export const deleteById = (id: string) =>
   prisma.actionItem.delete({ where: { id } });
 
+/**
+ * Replaces one row's evidence (segment references by idx) and nothing
+ * else. The live final pass renumbers a meeting's segments and re-points
+ * the evidence of the items that survive it (w3-jobs).
+ */
+export const updateEvidence = (id: string, evidence: Prisma.InputJsonValue) =>
+  prisma.actionItem.update({
+    where: { id },
+    data: { evidence },
+  });
+
 /** Counts by status across every meeting, for the analytics tiles. */
 export const countByStatus = (userId: string) =>
   prisma.actionItem.groupBy({

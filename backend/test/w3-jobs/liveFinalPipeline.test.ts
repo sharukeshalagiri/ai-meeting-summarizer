@@ -26,6 +26,7 @@ const store = vi.hoisted(() => ({
   assembleCalls: 0,
   asrDown: false,
   indexed: 0,
+  actionItems: [] as { id: string; task: string; status: string; evidence: unknown }[],
 }));
 
 vi.mock("../../src/repositories/meeting.repository", () => {
@@ -116,7 +117,11 @@ vi.mock("../../src/repositories/summary.repository", () => ({
 }));
 vi.mock("../../src/repositories/actionItem.repository", () => ({
   replaceForMeeting: async () => 0,
-  findByMeetingId: async () => [],
+  findByMeetingId: async () => store.actionItems,
+  updateEvidence: async (id: string, evidence: unknown) => {
+    const item = store.actionItems.find((row) => row.id === id);
+    if (item) item.evidence = evidence;
+  },
 }));
 
 vi.mock("../../src/services/speech.service", async () => {
@@ -211,7 +216,8 @@ const draft = () => [
   { idx: 0, speaker: "Me", text: "hello all", startMs: 0, endMs: 2000, channel: "mic", speakerId: "p-mic", noiseLabel: null },
   // "Speaker 2" was renamed to "Alice" (profile p-2, source MANUAL).
   { idx: 1000, speaker: "Alice", text: "ship it friday", startMs: 2000, endMs: 6000, channel: "remote", speakerId: "p-2", noiseLabel: null },
-  { idx: 1001, speaker: "Speaker 3", text: "agreed", startMs: 6000, endMs: 8000, channel: "remote", speakerId: "p-3", noiseLabel: null },
+  // seq 2, segment 1 (chunks here are not 1:1 with the ASR fake's timing).
+  { idx: 2001, speaker: "Speaker 3", text: "agreed", startMs: 6000, endMs: 8000, channel: "remote", speakerId: "p-3", noiseLabel: null },
 ];
 
 const RENAME = {
@@ -244,6 +250,7 @@ beforeEach(() => {
   store.assembleCalls = 0;
   store.asrDown = false;
   store.indexed = 0;
+  store.actionItems = [];
 });
 
 afterEach(async () => {
@@ -324,7 +331,7 @@ describe("live final pass", () => {
     expect(store.asrCalls).toHaveLength(4);
     expect(store.stages).toContain("CLEANING");
     expect(store.stages).not.toContain("FAILED");
-    expect(store.segments.map((s) => s.idx)).toEqual([0, 1000, 1001]);
+    expect(store.segments.map((s) => s.idx)).toEqual([0, 1000, 2001]);
     expect(store.segments[1].speaker).toBe("Alice");
     expect(store.summary).toEqual({ pipeline: "v2" });
   });
@@ -432,4 +439,36 @@ describe("live final pass", () => {
     expect(store.corrections).toEqual([RENAME]);
     await vi.waitFor(() => expect(store.indexed).toBe(1));
   }, 30_000);
+
+  it("re-points a kept action item's evidence (draft idx 2001) to the final segment at the same time", async () => {
+    store.actionItems = [
+      {
+        id: "a1",
+        task: "Confirm Friday",
+        status: "ACCEPTED",
+        evidence: [
+          // No startMs: the draft segment 2001's start (6000 ms) is used.
+          { idx: 2001, speaker: "Speaker 3", quote: "agreed" },
+          // With startMs: that moment is used.
+          { idx: 1000, speaker: "Alice", quote: "ship it", startMs: 2500 },
+        ],
+      },
+    ];
+
+    await meetingService.startLiveFinal("m1", "s1", "live-final");
+    await stageIs("DONE");
+
+    // Final segments: 0 "Hello all." 200-1800, 1 "Ship it Friday." 2100-5600,
+    // 2 "Agreed." 6100-7900, 3 "Late thought." 10000-11500.
+    expect(store.actionItems[0]).toMatchObject({
+      status: "ACCEPTED",
+      evidence: [
+        { idx: 2, speaker: "Speaker 3", quote: "agreed", startMs: 6000 },
+        { idx: 1, speaker: "Alice", quote: "ship it", startMs: 2500 },
+      ],
+    });
+    const byIdx = new Map(store.segments.map((segment) => [segment.idx, segment.text]));
+    expect(byIdx.get(2)).toBe("Agreed.");
+    expect(byIdx.get(1)).toBe("Ship it Friday.");
+  });
 });
