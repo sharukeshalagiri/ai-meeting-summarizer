@@ -8,7 +8,7 @@ import * as segmentRepo from "../repositories/segment.repository";
 import * as summaryRepo from "../repositories/summary.repository";
 import { Queues } from "../jobs/definitions";
 import { parseFailure } from "../jobs/errors";
-import { enqueue, getQueue, waitForJob } from "../jobs/index";
+import { assertJobsAvailable, enqueue, getQueue, waitForJob } from "../jobs/index";
 import { trySetProgress } from "../jobs/progress";
 import { AppError, BadRequest, NotFound } from "../types/errors";
 import { MeetingStatus, ProcessingStage } from "../types/meeting";
@@ -230,6 +230,10 @@ const queueResummarize = async (
   meetingId: string,
   options: ResummarizeOptions
 ) => {
+  // Before anything is written: a SUMMARIZING stage with no job behind
+  // it would leave the page waiting forever.
+  assertJobsAvailable();
+
   if (options.mode !== undefined && options.mode !== null) {
     await setMode(meetingId, options.mode);
   } else {

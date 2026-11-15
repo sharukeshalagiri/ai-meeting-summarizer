@@ -2,7 +2,12 @@ import fs from "fs/promises";
 import path from "path";
 import { Queues, type PipelineJob } from "../jobs/definitions";
 import { parseFailure, PROCESSING_NOTES, SUMMARY_FAILED } from "../jobs/errors";
-import { enqueue, isPipelineBusy, memoryJobPromise } from "../jobs/index";
+import {
+  assertJobsAvailable,
+  enqueue,
+  isPipelineBusy,
+  memoryJobPromise,
+} from "../jobs/index";
 import { setProgress, waitForMeeting, watchMeeting } from "../jobs/progress";
 import { env } from "../lib/env";
 import { logger } from "../lib/logger";
@@ -98,8 +103,13 @@ export const getAudioFile = async (meetingId: string): Promise<string> => {
   return absolutePath;
 };
 
-/** Status and processing* columns only (the progress stream). */
+/**
+ * Status and processing* columns only (the progress stream). 503 while
+ * the queue is down: nothing would move, and the page should say so.
+ */
 export const getProgress = async (meetingId: string) => {
+  assertJobsAvailable();
+
   const row = await meetingRepo.findProgress(meetingId);
 
   if (!row) {

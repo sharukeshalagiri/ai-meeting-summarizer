@@ -41,7 +41,7 @@ vi.mock("../../src/services/meeting.service", async (importOriginal) => {
 });
 
 import { createApp } from "../../src/app";
-import { emitProgress } from "../../src/jobs/progress";
+import { emitProgress, progressBus, PROGRESS_EVENT, watchMeeting } from "../../src/jobs/progress";
 
 const app = createApp();
 let server: Server;
@@ -137,6 +137,41 @@ describe("GET /api/meetings/:id/events", () => {
 
     expect(events.map((e) => e.event)).toEqual(["progress", "end"]);
     expect(events[0].data).toMatchObject({ processingStage: "FAILED" });
+  });
+
+  it("drops its subscription when the client goes away", async () => {
+    const before = progressBus.listenerCount(PROGRESS_EVENT);
+    const controller = new AbortController();
+
+    const res = await fetch(`${base}/api/meetings/m1/events`, { signal: controller.signal });
+    const first = await readEvents(res.body!, (events) => events.length >= 1);
+    first.reader.releaseLock();
+    expect(progressBus.listenerCount(PROGRESS_EVENT)).toBe(before + 1);
+
+    controller.abort();
+    await vi.waitFor(() => expect(progressBus.listenerCount(PROGRESS_EVENT)).toBe(before));
+  });
+
+  it("picks up a write made without an event (another process) on the poll", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const seen: unknown[] = [];
+      const stop = watchMeeting("m1", (row) => seen.push(row), { pollMs: 1000 });
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+
+      store.row!.processingStage = "CLEANING";
+      vi.advanceTimersByTime(1000);
+      await vi.waitFor(() => expect(seen).toHaveLength(2));
+      expect(seen[1]).toMatchObject({ processingStage: "CLEANING" });
+
+      // Unchanged rows are not re-sent.
+      vi.advanceTimersByTime(3000);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(seen).toHaveLength(2);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("404s as JSON for an unknown meeting", async () => {

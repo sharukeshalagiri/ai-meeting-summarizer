@@ -16,6 +16,7 @@ import userRoutes from "./user.routes";
 import w1SumRoutes from "./w1-sum.routes";
 import w2SpkRoutes from "./w2-spk.routes";
 import w3JobsRoutes from "./w3-jobs.routes";
+import w3JobsHealthRoutes from "./w3-jobs-health.routes";
 
 /**
  * Single place where the API surface is assembled, so the full set of
@@ -45,5 +46,7 @@ router.use("/meetings", w2SpkRoutes);
 
 // w3-jobs: process, retry and the progress stream under /meetings.
 router.use("/meetings", w3JobsRoutes);
+// w3-jobs: health with the queue state, and readiness (503 while it is down).
+router.use("/health", w3JobsHealthRoutes);
 
 export default router;

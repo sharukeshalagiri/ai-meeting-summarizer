@@ -35,20 +35,49 @@ const createQueue = async (): Promise<JobQueue> => {
   return new PgBossQueue(env.databaseUrl);
 };
 
+/**
+ * User-facing message whenever work cannot be queued (503). Never the
+ * driver's own error text, which can contain connection details.
+ */
+export const JOBS_UNAVAILABLE =
+  "Background processing is unavailable right now. Try again shortly.";
+
+export const jobsUnavailable = () => new AppError(JOBS_UNAVAILABLE, 503);
+
 const boot = async (options: { schedules: boolean }): Promise<JobQueue> => {
   const instance = await createQueue();
-  await instance.start();
 
-  for (const definition of QUEUE_DEFINITIONS) {
-    await instance.createQueue(definition);
+  try {
+    await instance.start();
+
+    for (const definition of QUEUE_DEFINITIONS) {
+      await instance.createQueue(definition);
+    }
+
+    const { registerWorkers } = await import("./worker");
+    await registerWorkers(instance, options);
+  } catch (error) {
+    // A half-started pg-boss would keep its pool and timers alive.
+    await instance.stop().catch(() => undefined);
+    throw error;
   }
-
-  const { registerWorkers } = await import("./worker");
-  await registerWorkers(instance, options);
 
   log.info("Job queue started", { driver: instance.driver });
 
   return instance;
+};
+
+/**
+ * "up" once the queue has started. The memory driver starts on first
+ * use, so it is always available; pg-boss is "down" until server.ts has
+ * started it (and while it keeps failing to).
+ */
+export const queueStatus = (): "up" | "down" =>
+  queue || env.jobsDriver === "memory" ? "up" : "down";
+
+/** Throws the 503 above unless work can be queued now. */
+export const assertJobsAvailable = (): void => {
+  if (queueStatus() !== "up") throw jobsUnavailable();
 };
 
 /** Starts the queue, its workers and the recurring jobs (server.ts). */
@@ -81,20 +110,24 @@ export const stopJobs = async (): Promise<void> => {
  */
 export const getQueue = async (): Promise<JobQueue> => {
   if (queue) return queue;
-  if (starting) return starting;
 
+  // pg-boss still starting (or retrying after a failed boot): answer 503
+  // now rather than hold the request open on a database that may be gone.
   if (env.jobsDriver === "memory") {
-    starting = boot({ schedules: false }).then((instance) => {
-      queue = instance;
-      return instance;
-    });
+    if (starting) return starting;
+    starting = boot({ schedules: false })
+      .then((instance) => {
+        queue = instance;
+        return instance;
+      })
+      .catch((error) => {
+        starting = null;
+        throw error;
+      });
     return starting;
   }
 
-  throw new AppError(
-    "Background processing is not running right now. Try again in a moment.",
-    503
-  );
+  throw jobsUnavailable();
 };
 
 export const enqueue = async (
