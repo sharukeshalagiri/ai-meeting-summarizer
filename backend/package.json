@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "generate": "prisma generate",
     "user:password": "ts-node --transpile-only scripts/set-password.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "demo:seed": "ts-node --transpile-only src/demo/seed.ts"
   },
   "keywords": [],
   "author": "",
