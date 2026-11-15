@@ -31,16 +31,55 @@ runs **once per run**, batched over all cases, on the flash-lite model:
 
 The pipeline is reached only through exported functions
 (`runSummaryPipeline`, `chunkByTokenBudget`, `transcribeAudioDetailed`,
-`diarizeSegments`, `withRetry`, `getClient`). The meter wraps
-`generateContent` on the backend's single shared client at runtime, so
-every pipeline request passes through it. Alternatives rejected: a test
+`diarizeSegments`, `withRetry`, `getClient`). The meter wraps the global
+`fetch` and counts requests to the Gemini API host, so every attempt
+passes through it, whichever module sent it. (The first version wrapped
+the client and was blind; see "Meter fix".) Alternatives rejected: a test
 hook in `lib/gemini.ts` (not ours to change), or a proxy server (more
-moving parts). Risk: if `lib/gemini.ts` stops sharing one client, the
-meter sees nothing. `eval/test/run.test.ts` would then fail, because it
-asserts request counts through the real pipeline.
+moving parts). Risk: if the SDK stops using the global `fetch`, the meter
+sees nothing. `eval/test/cli.test.ts` and the run-time `MeterBlindError`
+guard would then catch it.
 
 The call estimate mirrors two pipeline defaults (CLEAN batch 150, token
 budget 12,000) in `eval/src/run.ts`. See the request to w1-sum below.
+
+## Meter fix (after the first real run, 2026-11-14)
+
+The first baseline attempt was not valid, and nothing from it was accepted.
+
+What went wrong:
+- The meter wrapped `generateContent` on the client the harness imported.
+  Under tsx, the harness (ESM) and the pipeline (CommonJS) load
+  `backend/src/lib/gemini.ts` as **two module instances**, each with its
+  own client.
+- So the meter saw only the judge's request, and the 30-request cap was not
+  enforced on pipeline requests. The logs show about 33 attempts.
+- Outages were scored as PIPELINE_ERROR. They were 5-minute `fetch failed`
+  hangs, 503s, and free-tier 429s (5 a minute and 20 a day for
+  gemini-flash-latest).
+- Vitest resolves both imports to one instance, which is why the unit tests
+  passed.
+
+Fix:
+- Meter the **global `fetch`** for the Gemini API host. @google/genai looks
+  up `fetch` at call time, so every attempt is seen, whichever module
+  instance sent it.
+- Pace requests per model (`--rpm`, default 5). Abort a request after
+  `--request-timeout` (120 s) and count it as a network failure.
+- Treat 429 and quota errors, "overloaded", "rate limited" and network
+  errors as INFRA_ERROR, even when they surface only as the pipeline's
+  error message.
+- Abort the run (`MeterBlindError`) if a case produced a summary while the
+  meter counted no request.
+- `eval/test/cli.test.ts` runs the real CLI in a child process (tsx, real
+  SDK) with a preloaded fake `fetch`. It checks that the meter's count
+  equals the number of requests actually sent. The old meter would count 0
+  against 3.
+
+Budget note: the free tier allows 20 gemini-flash-latest requests a day. A
+full baseline needs about 18: EXTRACT and VERIFY for 7 cases, plus 4 for
+the long case. That fits only with almost no retries, so it must run on a
+fresh daily quota.
 
 ## Outages never read as low accuracy (INFRA_ERROR)
 

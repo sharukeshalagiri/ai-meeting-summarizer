@@ -1,10 +1,16 @@
 /**
- * Counts, times and caps every Gemini request the evaluation makes.
+ * Counts, times, paces and caps every Gemini request the evaluation makes.
  *
- * The pipeline is never modified: the meter wraps `generateContent` on
- * the backend's single shared client (lib/gemini.ts getClient()), so
- * every request made through it, including each retry attempt inside
- * withRetry, passes through here.
+ * The pipeline is never modified. The meter wraps the global `fetch` and
+ * watches requests to the Gemini API host. @google/genai looks `fetch` up
+ * at call time, so every attempt is seen, including each retry inside
+ * withRetry, whichever copy of the SDK or of lib/gemini.ts made it.
+ *
+ * Why fetch and not the client: under tsx the harness (ESM) and the
+ * pipeline (CommonJS) load backend/src/lib/gemini.ts as two module
+ * instances, each with its own client. Wrapping the client the harness
+ * could see missed every pipeline request in the first real run (see
+ * docs/decisions/w2-eval.md, "Meter fix").
  *
  * Why it matters for accuracy: the pipeline deliberately swallows some
  * failures (a failed CLEAN batch counts as substantive, a failed VERIFY
@@ -54,14 +60,21 @@ export class BudgetExceeded extends Error {
 
 const TRANSIENT_503 = /unavailable|overloaded|high demand|503/i;
 const TRANSIENT_429 = /429|rate.?limit|resource.?exhausted|quota/i;
-const NETWORK = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket hang up|network/i;
+const NETWORK = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|socket hang up|network|abort|timeout|timed out/i;
 
 export const classifyError = (error: unknown): Outcome => {
   if (error instanceof BudgetExceeded) return "refused";
-  const detail = error instanceof Error ? `${error.message} ${String((error as { status?: unknown }).status ?? "")}` : String(error);
+  const detail = error instanceof Error ? `${error.name} ${error.message} ${String((error as { status?: unknown }).status ?? "")}` : String(error);
   if (TRANSIENT_503.test(detail)) return "503";
   if (TRANSIENT_429.test(detail)) return "429";
   if (NETWORK.test(detail)) return "network";
+  return "permanent";
+};
+
+export const classifyStatus = (status: number): Outcome => {
+  if (status >= 200 && status < 300) return "ok";
+  if (status === 503 || status === 500 || status === 502 || status === 504) return "503";
+  if (status === 429) return "429";
   return "permanent";
 };
 
@@ -75,12 +88,39 @@ const hash = (text: string): string => {
   return (h >>> 0).toString(16);
 };
 
-type GenerateContent = (params: Record<string, unknown>) => Promise<unknown>;
+/** Gemini API requests: generativelanguage.googleapis.com/.../models/<model>:<method>. */
+export const GEMINI_HOST = /(^|\.)generativelanguage\.googleapis\.com$/;
+
+export const geminiModelOf = (url: URL): string | null => {
+  if (!GEMINI_HOST.test(url.hostname)) return null;
+  const m = url.pathname.match(/\/models\/([^/:]+):/);
+  return m ? m[1] : "?";
+};
+
+type Fetch = typeof fetch;
+
+export interface FetchMeterOptions {
+  /** Requests per minute allowed per model (free tier: 5). 0 = no pacing. */
+  rpm?: number;
+  /** Abort a request that has not answered after this long (a hang is a network failure). */
+  requestTimeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+}
+
+const urlOf = (input: Parameters<Fetch>[0]): URL | null => {
+  try {
+    return new URL(typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url);
+  } catch {
+    return null;
+  }
+};
 
 export class GeminiMeter {
   readonly records: CallRecord[] = [];
   currentCase = "-";
   private sent = 0;
+  private lastSent = new Map<string, number>();
 
   constructor(readonly cap: number) {}
 
@@ -93,21 +133,27 @@ export class GeminiMeter {
   }
 
   /**
-   * Wraps `models.generateContent` in place. `impl` replaces the real
-   * request (tests, replay); by default the original method is called.
+   * Wraps `target.fetch` (globalThis by default). Non-Gemini requests pass
+   * through untouched. `impl` replaces the real network (tests).
    */
-  install(models: { generateContent: GenerateContent }, impl?: GenerateContent): () => void {
-    const original = models.generateContent.bind(models);
-    const send = impl ?? original;
+  installFetch(target: { fetch: Fetch } = globalThis, options: FetchMeterOptions = {}, impl?: Fetch): () => void {
+    const original = target.fetch;
+    const send: Fetch = impl ?? original.bind(target);
+    const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const now = options.now ?? Date.now;
+    const interval = options.rpm && options.rpm > 0 ? Math.ceil(60_000 / options.rpm) : 0;
+    const timeoutMs = options.requestTimeoutMs ?? 0;
 
-    models.generateContent = async (params: Record<string, unknown> = {}) => {
-      const model = String(params.model ?? "?");
-      const config = (params.config ?? {}) as Record<string, unknown>;
-      const request = hash(JSON.stringify([model, params.contents, config.systemInstruction]));
+    const metered: Fetch = async (input, init) => {
+      const url = urlOf(input);
+      const model = url ? geminiModelOf(url) : null;
+      if (!model) return send(input, init);
+
+      const body = typeof init?.body === "string" ? init.body : "";
       const record: CallRecord = {
         caseId: this.currentCase,
         model,
-        request,
+        request: hash(`${url!.pathname}\n${body}`),
         outcome: "ok",
         ms: 0,
         inputTokens: 0,
@@ -120,26 +166,48 @@ export class GeminiMeter {
         throw new BudgetExceeded(this.cap);
       }
 
+      // Free-tier limits are per model per minute; space requests out
+      // instead of burning attempts on 429s.
+      if (interval) {
+        const wait = (this.lastSent.get(model) ?? -Infinity) + interval - now();
+        if (wait > 0) await sleep(wait);
+      }
+      this.lastSent.set(model, now());
       this.sent++;
-      const started = Date.now();
+
+      const signals = [init?.signal, timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined].filter(
+        (s): s is AbortSignal => Boolean(s)
+      );
+      const started = now();
       try {
-        const response = (await send(params)) as { usageMetadata?: Record<string, unknown> } | undefined;
-        const usage = response?.usageMetadata ?? {};
-        record.inputTokens = Number(usage.promptTokenCount ?? 0) || 0;
-        record.outputTokens =
-          (Number(usage.candidatesTokenCount ?? 0) || 0) + (Number(usage.thoughtsTokenCount ?? 0) || 0);
+        const response = await send(input, {
+          ...init,
+          ...(signals.length ? { signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) } : {}),
+        });
+        record.outcome = classifyStatus(response.status);
+        if (record.outcome === "ok") {
+          try {
+            const usage = ((await response.clone().json()) as { usageMetadata?: Record<string, unknown> }).usageMetadata ?? {};
+            record.inputTokens = Number(usage.promptTokenCount ?? 0) || 0;
+            record.outputTokens =
+              (Number(usage.candidatesTokenCount ?? 0) || 0) + (Number(usage.thoughtsTokenCount ?? 0) || 0);
+          } catch {
+            // Tokens are a nice-to-have; an unreadable body is the SDK's problem.
+          }
+        }
         return response;
       } catch (error) {
-        record.outcome = classifyError(error);
+        record.outcome = classifyError(error) === "permanent" ? "network" : classifyError(error);
         throw error;
       } finally {
-        record.ms = Date.now() - started;
+        record.ms = now() - started;
         this.records.push(record);
       }
     };
 
+    target.fetch = metered;
     return () => {
-      models.generateContent = original;
+      target.fetch = original;
     };
   }
 

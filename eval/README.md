@@ -25,7 +25,10 @@ Options of `npm run eval`: `--cases` (ids, or `smoke`, `synthetic`,
 default 30, every retry counts), `--no-judge`, `--diarize` (also DER for
 all speakers with the exported `diarizeSegments`; costs Gemini requests
 with main's text-based diarizer), `--retry-wait S` (wait before re-running
-a case hit by an outage, default 60), `--title` (report name).
+a case hit by an outage, default 60), `--rpm N` (Gemini requests per minute
+per model, default 5 for the free tier; 0 = no pacing), `--request-timeout S`
+(abort a request that hangs, default 120; counts as a network outage),
+`--title` (report name), `--out DIR` (reports and runs elsewhere).
 
 ## Cases
 
@@ -80,9 +83,12 @@ Accuracy is pooled over cases (micro averages). Only `OK` cases count;
 
 ## Gemini budget and outages
 
-All requests go through the backend's one Gemini client, which the
-harness wraps (`src/meter.ts`): every attempt is counted, timed and
-priced, and request N+1 past `--cap` is refused without being sent. A
+The harness wraps the global `fetch` and meters every request to the
+Gemini API host (`src/meter.ts`): every attempt is counted, timed,
+priced and paced (`--rpm`), and request N+1 past `--cap` is refused
+without being sent. A run aborts if a case produced a summary while the
+meter counted no request, since then neither the cap nor outage
+detection can be trusted. A
 case is only started when its estimated requests (CLEAN batches +
 EXTRACT chunks + REDUCE + VERIFY) fit what is left, keeping one for the
 judge. A request still failing on 503/429/network after its retries makes
