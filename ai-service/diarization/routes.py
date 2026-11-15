@@ -21,9 +21,16 @@ CHANNEL_LAYOUTS = ("mono", "stereo-mic-left")
 MAX_SEGMENTS = 5000
 
 
+class Word(BaseModel):
+    startMs: int
+    endMs: int
+
+
 class Span(BaseModel):
     startMs: int
     endMs: int
+    # ASR word timings; used to cut a segment into speaker turns.
+    words: list[Word] = Field(default_factory=list)
 
 
 class DiarizeRequest(BaseModel):

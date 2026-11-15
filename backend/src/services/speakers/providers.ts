@@ -38,6 +38,22 @@ export interface ChunkDiarizationRequest extends DiarizationRequest {
   knownLabels?: string[];
 }
 
+/**
+ * A chunk-level result: providers that cut segments into speaker turns
+ * (voice) also return `pieces`, each a span of one request segment with
+ * its own request-local label. `segments` keeps the interface's
+ * one-label-per-segment view (the label of the segment's longest piece).
+ */
+export interface ChunkDiarizationOutput extends DiarizationOutput {
+  pieces?: {
+    /** Index into the request's segments. */
+    segment: number;
+    startMs: number;
+    endMs: number;
+    speakerLabel: string;
+  }[];
+}
+
 export class DiarizationUnavailable extends Error {}
 
 /** Request-local label for segments too short to embed. */
@@ -55,21 +71,42 @@ const asNumberArray = (value: unknown): number[] | null =>
     : null;
 
 /**
- * Validates the ai-service response; never trusts its shape. Exported
- * for tests.
+ * Validates the ai-service response; never trusts its shape. Cluster
+ * members index into `pieces` (speaker-turn spans of the request's
+ * segments); an older response without `pieces` indexes segments, which
+ * is read as one piece per segment. Exported for tests.
  */
-export const parseVoiceClusters = (
+export const parseVoiceResponse = (
   body: unknown,
-  segmentCount: number
-): { members: number[]; centroid: number[] }[] => {
-  const clusters = (body as { clusters?: unknown } | null)?.clusters;
-  if (!Array.isArray(clusters)) {
+  segments: { startMs: number; endMs: number }[]
+): {
+  pieces: { segment: number; startMs: number; endMs: number }[];
+  clusters: { members: number[]; centroid: number[] }[];
+} => {
+  const root = (body ?? {}) as { clusters?: unknown; pieces?: unknown };
+  if (!Array.isArray(root.clusters)) {
     throw new Error("Diarization service returned an unexpected response.");
   }
 
-  const seen = new Set<number>();
+  const pieces = Array.isArray(root.pieces)
+    ? root.pieces.flatMap((raw) => {
+        const item = (raw ?? {}) as Record<string, unknown>;
+        const segment = Number(item.segment);
+        const startMs = Number(item.startMs);
+        const endMs = Number(item.endMs);
+        return Number.isInteger(segment) &&
+          segment >= 0 &&
+          segment < segments.length &&
+          Number.isFinite(startMs) &&
+          Number.isFinite(endMs) &&
+          endMs >= startMs
+          ? [{ segment, startMs, endMs }]
+          : [{ segment: -1, startMs: 0, endMs: 0 }]; // keeps member indices aligned
+      })
+    : segments.map((s, i) => ({ segment: i, startMs: s.startMs, endMs: s.endMs }));
 
-  return clusters.flatMap((raw) => {
+  const seen = new Set<number>();
+  const clusters = root.clusters.flatMap((raw) => {
     const item = (raw ?? {}) as Record<string, unknown>;
     const centroid = asNumberArray(item.centroid) ?? [];
     const members = Array.isArray(item.members)
@@ -77,13 +114,16 @@ export const parseVoiceClusters = (
           (m): m is number =>
             Number.isInteger(m) &&
             (m as number) >= 0 &&
-            (m as number) < segmentCount &&
+            (m as number) < pieces.length &&
+            pieces[m as number].segment >= 0 &&
             !seen.has(m as number)
         )
       : [];
     members.forEach((m) => seen.add(m));
     return members.length ? [{ members, centroid }] : [];
   });
+
+  return { pieces, clusters };
 };
 
 const outputSegments = (
@@ -104,7 +144,7 @@ export class VoiceDiarizationProvider implements DiarizationProvider {
     private readonly post: Poster = (url, body, config) => axios.post(url, body, config)
   ) {}
 
-  async diarize(request: ChunkDiarizationRequest): Promise<DiarizationOutput> {
+  async diarize(request: ChunkDiarizationRequest): Promise<ChunkDiarizationOutput> {
     if (!request.filePath) {
       throw new DiarizationUnavailable("No audio file to diarize.");
     }
@@ -119,9 +159,14 @@ export class VoiceDiarizationProvider implements DiarizationProvider {
           file_path: path.resolve(request.filePath),
           offset_ms: request.offsetMs,
           channel_layout: request.channelLayout,
+          // Word timings let the ai-service cut a segment into turns.
           segments: request.segments.map((s) => ({
             startMs: s.startMs,
             endMs: s.endMs,
+            words: (s.words ?? []).map((w) => ({
+              startMs: w.startMs,
+              endMs: w.endMs,
+            })),
           })),
         },
         { timeout: env.transcriptionTimeoutMs }
@@ -134,14 +179,28 @@ export class VoiceDiarizationProvider implements DiarizationProvider {
       );
     }
 
-    const clusters = parseVoiceClusters(data, request.segments.length);
-    const labels = new Map<number, string>();
+    const { pieces, clusters } = parseVoiceResponse(data, request.segments);
+    const pieceLabel = new Map<number, string>();
     clusters.forEach((cluster, n) =>
-      cluster.members.forEach((m) => labels.set(m, `c${n}`))
+      cluster.members.forEach((m) => pieceLabel.set(m, `c${n}`))
     );
 
+    const labelled = pieces.flatMap((piece, k) =>
+      piece.segment >= 0
+        ? [{ ...piece, speakerLabel: pieceLabel.get(k) ?? UNATTRIBUTED }]
+        : []
+    );
+
+    // Per segment, the label of its longest attributed piece.
+    const segmentLabel = (i: number) =>
+      labelled
+        .filter((p) => p.segment === i && p.speakerLabel)
+        .sort((a, b) => b.endMs - b.startMs - (a.endMs - a.startMs))[0]
+        ?.speakerLabel ?? UNATTRIBUTED;
+
     return {
-      segments: outputSegments(request, (i) => labels.get(i) ?? UNATTRIBUTED),
+      segments: outputSegments(request, segmentLabel),
+      pieces: labelled,
       speakers: clusters.map((cluster, n) => ({
         label: `c${n}`,
         displayName: null,

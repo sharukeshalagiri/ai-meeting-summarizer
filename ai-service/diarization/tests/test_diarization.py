@@ -386,3 +386,90 @@ def test_bench_keeps_a_speaker_across_chunks_with_the_fake_engine():
     assert profiles == 2
     assert result["speaker_error"] == 0
     assert result["boundary_splits"] == 0
+
+
+# ---- turns.py: one ASR segment, two voices -------------------------------
+
+
+def words_between(start_s, end_s, step=0.4, offset_ms=0):
+    """Fake ASR words every `step` seconds, as meeting-time ms."""
+    out = []
+    t = start_s
+    while t + step <= end_s + 1e-9:
+        out.append({"startMs": offset_ms + int(t * 1000), "endMs": offset_ms + int((t + step - 0.05) * 1000)})
+        t += step
+    return out
+
+
+def test_gap_pieces_split_at_pauses_only():
+    from diarization import turns
+
+    spans = [(0.0, 0.3), (0.35, 0.7), (1.5, 1.8), (1.85, 2.2)]
+    assert turns.gap_pieces(0.0, 2.2, spans) == [(0.0, 0.7), (1.5, 2.2)]
+    assert turns.gap_pieces(0.0, 2.2, []) == [(0.0, 2.2)]
+
+
+def test_one_whisper_segment_with_two_voices_becomes_two_speakers(fake_audio):
+    # Priya (marker 1) for 6 s, a 1 s pause, Sam (marker 2) for 6 s, all
+    # returned by Whisper as ONE segment with word timings.
+    fake_audio["audio"] = timeline((1, 6), (0, 1), (2, 6))
+    words = words_between(0.0, 6.0) + words_between(7.0, 13.0)
+    result = pipeline.diarize_file(
+        "x.webm",
+        0,
+        "stereo-mic-left",
+        [{"startMs": 0, "endMs": 13_000, "words": words}],
+        engine=FakeEngine(),
+    )
+    assert [(p["segment"], p["startMs"], p["endMs"]) for p in result["pieces"]] == [
+        (0, 0, 5950),
+        (0, 7000, 13_000),
+    ]
+    assert sorted(c["members"] for c in result["clusters"]) == [[0], [1]]
+
+
+def test_turn_change_without_a_pause_is_found_by_voice(fake_audio):
+    # No pause: words are evenly spaced across the change at 6 s.
+    fake_audio["audio"] = timeline((1, 6), (2, 6))
+    result = pipeline.diarize_file(
+        "x.webm",
+        0,
+        "mono",
+        [{"startMs": 0, "endMs": 12_000, "words": words_between(0.0, 12.0)}],
+        engine=FakeEngine(),
+    )
+    cuts = [p["endMs"] for p in result["pieces"][:-1]]
+    assert len(result["pieces"]) == 2
+    # Within about one word of the true change (the fake voice is coarse).
+    assert abs(cuts[0] - 6000) <= 500
+    assert len(result["clusters"]) == 2
+
+
+def test_one_voice_segment_is_not_split(fake_audio):
+    fake_audio["audio"] = timeline((1, 12))
+    result = pipeline.diarize_file(
+        "x.webm",
+        0,
+        "mono",
+        [{"startMs": 0, "endMs": 12_000, "words": words_between(0.0, 12.0)}],
+        engine=FakeEngine(),
+    )
+    assert len(result["pieces"]) == 1
+    assert [c["members"] for c in result["clusters"]] == [[0]]
+
+
+def test_route_accepts_words(client, fake_audio, tmp_path):
+    audio_file = tmp_path / "chunk.webm"
+    audio_file.write_bytes(b"fake")
+    fake_audio["audio"] = timeline((1, 4), (0, 1), (2, 4))
+    res = client.post(
+        "/diarize",
+        json={
+            "file_path": str(audio_file),
+            "segments": [
+                {"startMs": 0, "endMs": 9000, "words": words_between(0, 4) + words_between(5, 9)}
+            ],
+        },
+    )
+    assert res.status_code == 200
+    assert len(res.json()["pieces"]) == 2

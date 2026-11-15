@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import cluster, engines
+from . import cluster, engines, turns
 
 SAMPLE_RATE = engines.SAMPLE_RATE
 
@@ -54,22 +54,43 @@ def _clusters_from_labels(labels, spans, vectors, members_of):
     return result
 
 
-def _embed_segments(audio, segments, offset_ms, engine):
+def _embed_pieces(audio, segments, offset_ms, engine):
+    """
+    Cuts every segment into speaker-turn pieces (turns.py), then embeds
+    each piece. Returns the pieces (meeting-time spans with their
+    segment index) and, for the embeddable ones, vectors and spans.
+    Every segment gets at least one piece, so none is lost.
+    """
     total_s = len(audio) / SAMPLE_RATE
-    vectors, spans, members, skipped = [], [], [], []
+
+    def embed_span(a: float, b: float):
+        return engine.embed(audio[int(a * SAMPLE_RATE) : int(b * SAMPLE_RATE)])
+
+    pieces, vectors, spans, members, skipped = [], [], [], [], []
     for i, segment in enumerate(segments):
         start, end = _local_span(segment, offset_ms, total_s)
-        parts = cluster.windows(start, end)
-        if not parts:
-            skipped.append(i)
-            continue
-        embedded = [
-            engine.embed(audio[int(a * SAMPLE_RATE) : int(b * SAMPLE_RATE)]) for a, b in parts
-        ]
-        vectors.append(cluster.weighted_centroid(embedded, [b - a for a, b in parts]))
-        spans.append((start, end))
-        members.append(i)
-    return vectors, spans, members, skipped
+        parts_of_segment = turns.split_segment(
+            start, end, segment.get("words") or [], offset_ms, embed_span
+        ) or [(start, end)]
+
+        for a, b in parts_of_segment:
+            index = len(pieces)
+            pieces.append(
+                {
+                    "segment": i,
+                    "startMs": int(round(a * 1000)) + offset_ms,
+                    "endMs": int(round(b * 1000)) + offset_ms,
+                }
+            )
+            windows = cluster.windows(a, b)
+            if not windows:
+                skipped.append(index)
+                continue
+            embedded = [embed_span(x, y) for x, y in windows]
+            vectors.append(cluster.weighted_centroid(embedded, [y - x for x, y in windows]))
+            spans.append((a, b))
+            members.append(index)
+    return pieces, vectors, spans, members, skipped
 
 
 def _pyannote(audio, segments, offset_ms, engine):
@@ -113,24 +134,34 @@ def diarize_file(
     engine=None,
 ) -> dict:
     """
-    `segments` are [{startMs, endMs}] on the meeting timeline (the
-    request's offset_ms is where this file starts). Returns clusters
-    whose `members` index into `segments`; segments too short to embed
-    are listed in `skipped`.
+    `segments` are [{startMs, endMs, words?}] on the meeting timeline
+    (the request's offset_ms is where this file starts; words are
+    [{startMs, endMs}]). Each segment is cut into speaker-turn `pieces`
+    ({segment, startMs, endMs}); clusters' `members` and `skipped`
+    (pieces too short to embed) index into `pieces`.
     """
     engine = engine or engines.get_engine()
     audio = decode(path, channel_layout)
 
     if hasattr(engine, "diarize_waveform"):
         clusters, skipped = _pyannote(audio, segments, offset_ms, engine)
+        # pyannote attributes whole segments: one piece per segment.
+        pieces = [
+            {"segment": i, "startMs": int(s["startMs"]), "endMs": int(s["endMs"])}
+            for i, s in enumerate(segments)
+        ]
     else:
-        vectors, spans, members, skipped = _embed_segments(audio, segments, offset_ms, engine)
+        pieces, vectors, spans, members, skipped = _embed_pieces(
+            audio, segments, offset_ms, engine
+        )
         labels = cluster.agglomerate(vectors)
         clusters = _clusters_from_labels(labels, spans, vectors, members)
 
     return {
         "engine": engine.name,
         "model": engine.model,
+        # Cluster members and `skipped` index into `pieces`.
+        "pieces": pieces,
         "clusters": clusters,
         "skipped": skipped,
     }

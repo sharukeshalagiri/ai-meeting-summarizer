@@ -3,7 +3,7 @@ import { logger } from "../../lib/logger";
 import * as profileRepo from "../../repositories/speakerProfile.repository";
 import * as segmentRepo from "../../repositories/segment.repository";
 import type { ChannelLayout } from "../../types/capture";
-import type { DiarizationOutput, DiarizationProvider } from "../../types/providers";
+import type { DiarizationProvider } from "../../types/providers";
 import type { DiarizedSegment, RawSegment } from "../../types/segment";
 import { withMeetingLock } from "./lock";
 import {
@@ -19,6 +19,7 @@ import {
   createDiarizationProvider,
   TextDiarizationProvider,
   UNATTRIBUTED,
+  type ChunkDiarizationOutput,
   type ChunkDiarizationRequest,
 } from "./providers";
 import { CONTEXT_SIZE } from "./textLabels";
@@ -97,11 +98,11 @@ const isMic = (profile: Profile) => profile.label === MIC_LABEL;
 const diarizeRemote = async (
   request: ChunkDiarizationRequest,
   deps: SpeakerDeps
-): Promise<DiarizationOutput | null> => {
+): Promise<ChunkDiarizationOutput | null> => {
   const provider = deps.provider();
 
   try {
-    return await provider.diarize(request);
+    return (await provider.diarize(request)) as ChunkDiarizationOutput;
   } catch (error) {
     log.warn("Diarization provider failed; trying text diarization", {
       provider: provider.name,
@@ -112,7 +113,7 @@ const diarizeRemote = async (
   if (provider.name === "text") return null;
 
   try {
-    return await deps.fallback().diarize(request);
+    return (await deps.fallback().diarize(request)) as ChunkDiarizationOutput;
   } catch (error) {
     log.warn("Text diarization failed; attributing by continuity", {
       reason: error instanceof Error ? error.message : String(error),
@@ -152,7 +153,6 @@ const attributeUnlocked = async (
 
   const { meetingId } = context;
   const profiles: Profile[] = await deps.profiles.findByMeetingId(meetingId);
-  const assigned: (Profile | undefined)[] = segments.map(() => undefined);
 
   const createProfile = async (data: {
     label?: string;
@@ -176,18 +176,17 @@ const attributeUnlocked = async (
     );
 
   // 1. The user: every mic segment.
-  const micIndices = segments.flatMap((s, i) => (s.channel === "mic" ? [i] : []));
-  if (micIndices.length) {
-    const mic =
-      profiles.find(isMic) ?? (await createProfile({ label: MIC_LABEL }));
-    micIndices.forEach((i) => (assigned[i] = mic));
+  let mic: Profile | undefined;
+  if (segments.some((s) => s.channel === "mic")) {
+    mic = profiles.find(isMic) ?? (await createProfile({ label: MIC_LABEL }));
   }
 
-  // 2. Everyone else.
-  const remoteIndices = segments.flatMap((s, i) => (s.channel === "mic" ? [] : [i]));
+  // 2. Everyone else, attributed per speaker-turn piece: one ASR segment
+  // can hold several voices (ai-service diarization/turns.py).
+  const remote = segments.filter((s) => s.channel !== "mic");
+  const remoteParts = new Map<RawSegment, AttributedSegment[]>();
 
-  if (remoteIndices.length) {
-    const remote = remoteIndices.map((i) => segments[i]);
+  if (remote.length) {
     const chunkStartMs =
       context.offsetMs ?? Math.min(...remote.map((s) => s.startMs));
 
@@ -206,6 +205,15 @@ const attributeUnlocked = async (
           startMs: s.startMs,
           endMs: s.endMs,
           channel: s.channel ?? null,
+          ...(s.words?.length
+            ? {
+                words: s.words.map((w) => ({
+                  word: w.w,
+                  startMs: w.startMs,
+                  endMs: w.endMs,
+                })),
+              }
+            : {}),
         })),
         filePath: context.filePath ?? null,
         channelLayout: context.channelLayout ?? "mono",
@@ -219,7 +227,21 @@ const attributeUnlocked = async (
       deps
     );
 
-    const local: (Profile | undefined)[] = remote.map(() => undefined);
+    // The units attributed: the provider's pieces, else whole segments.
+    const units: Piece[] = output?.pieces?.length
+      ? output.pieces
+      : remote.map((s, i) => ({
+          segment: i,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          speakerLabel: output?.segments[i]?.speakerLabel ?? UNATTRIBUTED,
+        }));
+
+    const local: (Profile | undefined)[] = units.map(() => undefined);
+    const setLabel = (label: string, profile: Profile) =>
+      units.forEach((u, k) => {
+        if (u.speakerLabel === label) local[k] = profile;
+      });
 
     if (output) {
       const voiced = output.speakers.filter((s) => s.centroid.length > 0);
@@ -227,16 +249,14 @@ const attributeUnlocked = async (
       // Voice clusters: match to profiles by centroid.
       if (voiced.length) {
         const clusters: ClusterVoice[] = voiced.map((speaker) => {
-          const members = output.segments.flatMap((s, i) =>
-            s.speakerLabel === speaker.label ? [i] : []
-          );
+          const members = units.filter((u) => u.speakerLabel === speaker.label);
           return {
             centroid: speaker.centroid,
             speechMs: members.reduce(
-              (sum, i) => sum + Math.max(0, remote[i].endMs - remote[i].startMs),
+              (sum, u) => sum + Math.max(0, u.endMs - u.startMs),
               0
             ),
-            startMs: Math.min(...members.map((i) => remote[i].startMs)),
+            startMs: Math.min(...members.map((u) => u.startMs)),
           };
         });
 
@@ -268,9 +288,7 @@ const attributeUnlocked = async (
             });
           }
 
-          output.segments.forEach((s, i) => {
-            if (s.speakerLabel === voiced[n].label) local[i] = profile;
-          });
+          setLabel(voiced[n].label, profile);
         }
       }
 
@@ -282,49 +300,127 @@ const attributeUnlocked = async (
         const profile =
           (label ? byName(label) : undefined) ??
           (await createProfile({ label }));
-        output.segments.forEach((s, i) => {
-          if (s.speakerLabel === speaker.label) local[i] = profile;
-        });
+        setLabel(speaker.label, profile);
       }
     }
 
-    // Segments nobody attributed (too short to embed, or no provider):
-    // the nearest attributed segment in this chunk if close in time,
-    // else the previous chunk's last remote speaker at the boundary,
-    // else the nearest in this chunk, else the meeting's first remote
-    // profile, else a new one.
-    for (let i = 0; i < remote.length; i++) {
-      if (local[i]) continue;
+    // Units nobody attributed (too short to embed, or no provider): the
+    // nearest attributed unit in this chunk if close in time, else the
+    // previous chunk's last remote speaker at the boundary, else the
+    // nearest in this chunk, else the meeting's first remote profile,
+    // else a new one.
+    const gapBetween = (a: Piece, b: Piece) =>
+      Math.max(0, Math.max(a.startMs, b.startMs) - Math.min(a.endMs, b.endMs));
 
-      const nearest = remote
-        .map((s, j) => ({ j, gap: Math.abs(s.startMs - remote[i].startMs) }))
-        .filter(({ j }) => local[j] && j !== i)
+    for (let k = 0; k < units.length; k++) {
+      if (local[k]) continue;
+
+      const nearest = units
+        .map((u, j) => ({ j, gap: gapBetween(u, units[k]) }))
+        .filter(({ j }) => local[j] && j !== k)
         .sort((a, b) => a.gap - b.gap)[0];
 
       if (nearest && nearest.gap <= CONTINUITY_MS) {
-        local[i] = local[nearest.j];
+        local[k] = local[nearest.j];
       } else if (
         previousProfile &&
-        remote[i].startMs - chunkStartMs <= CONTINUITY_MS
+        units[k].startMs - chunkStartMs <= CONTINUITY_MS
       ) {
-        local[i] = previousProfile;
+        local[k] = previousProfile;
       } else if (nearest) {
-        local[i] = local[nearest.j];
+        local[k] = local[nearest.j];
       } else {
-        local[i] =
+        local[k] =
           previousProfile ??
           profiles.find((p) => !isMic(p)) ??
           (await createProfile({}));
       }
     }
 
-    remoteIndices.forEach((segmentIndex, k) => (assigned[segmentIndex] = local[k]));
+    remote.forEach((segment, r) => {
+      const pieces = units
+        .map((u, k) => ({ startMs: u.startMs, endMs: u.endMs, segment: u.segment, profile: local[k]! }))
+        .filter((u) => u.segment === r)
+        .sort((a, b) => a.startMs - b.startMs);
+      remoteParts.set(
+        segment,
+        splitByProfile(segment, pieces).map((part) => ({
+          ...part.segment,
+          speaker: shownName(part.profile),
+          speakerId: part.profile.id,
+        }))
+      );
+    });
   }
 
-  return segments.map((segment, i) => {
-    const profile = assigned[i]!;
-    return { ...segment, speaker: shownName(profile), speakerId: profile.id };
-  });
+  return segments.flatMap((segment) =>
+    segment.channel === "mic"
+      ? [{ ...segment, speaker: shownName(mic!), speakerId: mic!.id }]
+      : (remoteParts.get(segment) ?? [])
+  );
+};
+
+/** One attributed span of a remote segment (a provider piece). */
+interface Piece {
+  /** Index into the chunk's remote segments. */
+  segment: number;
+  startMs: number;
+  endMs: number;
+  speakerLabel: string;
+}
+
+/**
+ * Splits one ASR segment where its pieces change speaker. Adjacent
+ * pieces of the same profile merge back, so a one-voice segment comes
+ * back unchanged (original text and timing). Each word goes to the
+ * piece its midpoint falls in (a piece extends to the next one's
+ * start), and the text is rebuilt from those words. A segment without
+ * word timings cannot be split: it goes to the profile with the most
+ * time. Exported for tests.
+ */
+export const splitByProfile = <P extends { id: string }>(
+  segment: RawSegment,
+  pieces: { startMs: number; endMs: number; profile: P }[]
+): { segment: RawSegment; profile: P }[] => {
+  const groups: { startMs: number; endMs: number; profile: P }[] = [];
+  for (const piece of pieces) {
+    const last = groups[groups.length - 1];
+    if (last && last.profile.id === piece.profile.id) last.endMs = piece.endMs;
+    else groups.push({ startMs: piece.startMs, endMs: piece.endMs, profile: piece.profile });
+  }
+
+  if (groups.length === 0) return [];
+  if (groups.length === 1) return [{ segment, profile: groups[0].profile }];
+
+  const words = segment.words ?? [];
+  if (words.length === 0) {
+    const longest = [...groups].sort(
+      (a, b) => b.endMs - b.startMs - (a.endMs - a.startMs)
+    )[0];
+    return [{ segment, profile: longest.profile }];
+  }
+
+  return groups
+    .map((group, g) => {
+      const from = g === 0 ? -Infinity : group.startMs;
+      const to = g === groups.length - 1 ? Infinity : groups[g + 1].startMs;
+      const own = words.filter((w) => {
+        const middle = (w.startMs + w.endMs) / 2;
+        return middle >= from && middle < to;
+      });
+      return { own, profile: group.profile };
+    })
+    .filter((part) => part.own.length > 0)
+    .map(({ own, profile }) => ({
+      segment: {
+        ...segment,
+        text: own.map((w) => w.w).join(" ").trim(),
+        startMs: own[0].startMs,
+        endMs: own[own.length - 1].endMs,
+        words: own,
+      },
+      profile,
+    }));
 };
 
 /**

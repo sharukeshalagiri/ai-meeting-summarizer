@@ -3,6 +3,7 @@ import {
   applyAutoNames,
   attributeChunk,
   linkSegmentSpeakers,
+  splitByProfile,
   type SpeakerDeps,
 } from "../../src/services/speakers/attribute";
 import type {
@@ -243,5 +244,99 @@ describe("linkSegmentSpeakers and applyAutoNames", () => {
     rows.push({ idx: 0, speakerId: a.speakerId!, speaker: a.speaker, channel: "remote", text: "I'm Priya." });
     expect(await applyAutoNames("m", [], deps)).toEqual([]);
     expect(profiles[0].displayName).toBeNull();
+  });
+});
+
+/** "Hi I am Priya ... | Sam here ..." as one Whisper segment with words. */
+const twoVoiceSegment = () => {
+  const words = [
+    ["Hi,", 0], ["I", 400], ["am", 800], ["Priya.", 1200], ["All", 1600], ["done.", 2000],
+    // 1 s pause, then another voice in the SAME Whisper segment
+    ["Thanks.", 3400], ["The", 3800], ["migration", 4200], ["is", 4600], ["late.", 5000],
+  ].map(([w, startMs]) => ({ w: w as string, startMs: startMs as number, endMs: (startMs as number) + 350 }));
+  return {
+    text: words.map((w) => w.w).join(" "),
+    startMs: 0,
+    endMs: 5350,
+    channel: "remote" as const,
+    words,
+  };
+};
+
+describe("one Whisper segment, two voices", () => {
+  it("becomes two speakers, split at the piece boundary, in time order", async () => {
+    const { deps, profiles } = makeDeps({
+      diarize: async (request) => ({
+        segments: request.segments.map((s) => ({ ...s, speaker: "c0", speakerLabel: "c0" })),
+        pieces: [
+          { segment: 0, startMs: 0, endMs: 2350, speakerLabel: "c0" },
+          { segment: 0, startMs: 3400, endMs: 5350, speakerLabel: "c1" },
+        ],
+        speakers: [
+          { label: "c0", displayName: null, centroid: [1, 0, 0] },
+          { label: "c1", displayName: null, centroid: [0, 1, 0] },
+        ],
+      }),
+    });
+
+    const result = await attributeChunk(
+      [seg("before", -3000, "mic"), twoVoiceSegment()],
+      { meetingId: "m", offsetMs: 0, filePath: "x" },
+      deps
+    );
+
+    expect(result.map((s) => [s.speaker, s.text, s.startMs])).toEqual([
+      ["You", "before", -3000],
+      ["Speaker 1", "Hi, I am Priya. All done.", 0],
+      ["Speaker 2", "Thanks. The migration is late.", 3400],
+    ]);
+    expect(result[1].speakerId).not.toBe(result[2].speakerId);
+    expect(result[2].words?.map((w) => w.w)).toEqual(["Thanks.", "The", "migration", "is", "late."]);
+    expect(profiles.filter((p) => p.label !== "mic")).toHaveLength(2);
+  });
+
+  it("pieces of one voice merge back into the original segment", async () => {
+    const original = twoVoiceSegment();
+    const { deps } = makeDeps({
+      diarize: async (request) => ({
+        segments: request.segments.map((s) => ({ ...s, speaker: "c0", speakerLabel: "c0" })),
+        pieces: [
+          { segment: 0, startMs: 0, endMs: 2350, speakerLabel: "c0" },
+          { segment: 0, startMs: 3400, endMs: 5350, speakerLabel: "c0" },
+        ],
+        speakers: [{ label: "c0", displayName: null, centroid: [1, 0, 0] }],
+      }),
+    });
+
+    const result = await attributeChunk([original], { meetingId: "m" }, deps);
+    expect(result).toHaveLength(1);
+    expect(result[0].text).toBe(original.text);
+  });
+});
+
+describe("splitByProfile", () => {
+  const a = { id: "a" };
+  const b = { id: "b" };
+
+  it("assigns each word by its midpoint; a piece extends to the next one's start", () => {
+    const parts = splitByProfile(twoVoiceSegment(), [
+      { startMs: 0, endMs: 1000, profile: a },
+      { startMs: 1500, endMs: 2350, profile: b },
+      { startMs: 3400, endMs: 5350, profile: b },
+    ]);
+    expect(parts.map((p) => [p.profile.id, p.segment.text])).toEqual([
+      // "Priya." spans 1200-1550: its midpoint (1375) is before 1500.
+      ["a", "Hi, I am Priya."],
+      ["b", "All done. Thanks. The migration is late."],
+    ]);
+  });
+
+  it("without word timings, gives the whole segment to the longest piece", () => {
+    const { words: _w, ...noWords } = twoVoiceSegment();
+    const parts = splitByProfile(noWords, [
+      { startMs: 0, endMs: 1000, profile: a },
+      { startMs: 1000, endMs: 5000, profile: b },
+    ]);
+    expect(parts).toEqual([{ segment: noWords, profile: b }]);
   });
 });

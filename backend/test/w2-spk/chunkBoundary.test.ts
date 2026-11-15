@@ -36,6 +36,11 @@ const state = vi.hoisted(() => ({
   nextId: 0,
   /** The current chunk's segment texts, in order (fake ai-service). */
   lastTexts: [] as string[],
+  /**
+   * Segment text -> [word index where a second voice starts, its voice]:
+   * the fake ai-service then returns two pieces for that segment.
+   */
+  splits: new Map<string, [number, number[]]>(),
 }));
 
 vi.mock("../../src/repositories/liveSession.repository", async () =>
@@ -120,16 +125,34 @@ vi.mock("axios", async (importOriginal) => {
         response: { status: 503 },
       });
     }
-    // The fake ai-service clusters segments by their scripted voice.
-    const segments = body.segments as { startMs: number }[];
+    // The fake ai-service cuts scripted segments into two pieces, then
+    // clusters pieces by their scripted voice.
+    const segments = body.segments as {
+      startMs: number;
+      endMs: number;
+      words: { startMs: number; endMs: number }[];
+    }[];
     const texts = state.lastTexts;
+    const pieces: { segment: number; startMs: number; endMs: number; voice: number[] }[] = [];
+    segments.forEach((segment, i) => {
+      const voice = state.voices.get(texts[i]) ?? [1, 0, 0];
+      const split = state.splits.get(texts[i]);
+      if (split && segment.words.length > split[0]) {
+        const cut = segment.words[split[0]].startMs;
+        pieces.push({ segment: i, startMs: segment.startMs, endMs: cut, voice });
+        pieces.push({ segment: i, startMs: cut, endMs: segment.endMs, voice: split[1] });
+      } else {
+        pieces.push({ segment: i, startMs: segment.startMs, endMs: segment.endMs, voice });
+      }
+    });
     const byVoice = new Map<string, number[]>();
-    segments.forEach((_, i) => {
-      const key = JSON.stringify(state.voices.get(texts[i]) ?? [1, 0, 0]);
-      byVoice.set(key, [...(byVoice.get(key) ?? []), i]);
+    pieces.forEach((piece, k) => {
+      const key = JSON.stringify(piece.voice);
+      byVoice.set(key, [...(byVoice.get(key) ?? []), k]);
     });
     return {
       data: {
+        pieces: pieces.map(({ voice: _voice, ...piece }) => piece),
         clusters: [...byVoice.entries()].map(([key, members]) => ({
           members,
           centroid: JSON.parse(key),
@@ -204,6 +227,7 @@ beforeEach(() => {
   state.diarizeRequests = [];
   state.geminiScript = [];
   state.geminiCalls = [];
+  state.splits = new Map();
 });
 
 afterEach(() => cancelScheduledResummaries());
@@ -300,5 +324,23 @@ describe("chunk-boundary speaker split", () => {
 
     const names = segmentsOf(meetingId).map((r) => r.speaker);
     expect(names).toEqual(["Priya Sharma", "Speaker 2"]);
+  });
+
+  it("one Whisper segment with two voices becomes two rows with their own idx", async () => {
+    const { sessionId, meetingId } = await startSession();
+    const mixed = "the build is green thanks Priya the migration slips";
+    state.voices.set(mixed, [1, 0, 0]);
+    // Words 0-4 are Priya, from word 5 on it is Sam.
+    state.splits.set(mixed, [5, [0, 1, 0]]);
+
+    await sendChunk(sessionId, 0, mixed);
+
+    const rows = segmentsOf(meetingId);
+    expect(rows.map((r) => [r.idx, r.speaker, r.text])).toEqual([
+      [0, "Speaker 1", "the build is green thanks"],
+      [1, "Speaker 2", "Priya the migration slips"],
+    ]);
+    expect(rows[0].speakerId).not.toBe(rows[1].speakerId);
+    expect(rows[0].startMs).toBeLessThan(rows[1].startMs);
   });
 });

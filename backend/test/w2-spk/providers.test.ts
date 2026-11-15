@@ -5,7 +5,7 @@ import {
   TextDiarizationProvider,
   VoiceDiarizationProvider,
   parseDeepgramTurns,
-  parseVoiceClusters,
+  parseVoiceResponse,
   type ChunkDiarizationRequest,
 } from "../../src/services/speakers/providers";
 
@@ -22,10 +22,16 @@ const request = (over: Partial<ChunkDiarizationRequest> = {}): ChunkDiarizationR
   ...over,
 });
 
-describe("parseVoiceClusters", () => {
-  it("drops out-of-range, duplicate and non-integer members", () => {
+describe("parseVoiceResponse", () => {
+  const segments = [
+    { startMs: 0, endMs: 1000 },
+    { startMs: 1000, endMs: 2000 },
+    { startMs: 2000, endMs: 3000 },
+  ];
+
+  it("reads an old response (no pieces) as one piece per segment and drops bad members", () => {
     expect(
-      parseVoiceClusters(
+      parseVoiceResponse(
         {
           clusters: [
             { members: [0, 5, 1.5, "x"], centroid: [1, 0] },
@@ -34,8 +40,8 @@ describe("parseVoiceClusters", () => {
             { members: [2], centroid: ["bad"] },
           ],
         },
-        3
-      )
+        segments
+      ).clusters
     ).toEqual([
       { members: [0], centroid: [1, 0] },
       { members: [1], centroid: [0, 1] },
@@ -43,8 +49,30 @@ describe("parseVoiceClusters", () => {
     ]);
   });
 
+  it("keeps pieces aligned with member indices and ignores invalid ones", () => {
+    const result = parseVoiceResponse(
+      {
+        pieces: [
+          { segment: 0, startMs: 0, endMs: 400 },
+          { segment: 9, startMs: 0, endMs: 1 },
+          { segment: 0, startMs: 600, endMs: 1000 },
+        ],
+        clusters: [
+          { members: [0], centroid: [1, 0] },
+          { members: [1, 2], centroid: [0, 1] },
+        ],
+      },
+      segments
+    );
+    expect(result.clusters).toEqual([
+      { members: [0], centroid: [1, 0] },
+      { members: [2], centroid: [0, 1] },
+    ]);
+    expect(result.pieces[2]).toEqual({ segment: 0, startMs: 600, endMs: 1000 });
+  });
+
   it("rejects a malformed body", () => {
-    expect(() => parseVoiceClusters({ nope: true }, 1)).toThrow();
+    expect(() => parseVoiceResponse({ nope: true }, segments)).toThrow();
   });
 });
 
