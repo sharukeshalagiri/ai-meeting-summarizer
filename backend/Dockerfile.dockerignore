@@ -1,0 +1,13 @@
+# Build context filter for backend/Dockerfile (BuildKit reads
+# <Dockerfile>.dockerignore next to the Dockerfile).
+**/node_modules
+dist
+uploads
+coverage
+test
+**/*.test.ts
+.env
+.env.*
+!.env.example
+*.log
+src/generated
