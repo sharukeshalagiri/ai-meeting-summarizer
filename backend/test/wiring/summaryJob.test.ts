@@ -24,6 +24,18 @@ const store = vi.hoisted(() => ({
   legacyCalls: 0,
 }));
 
+
+// Read-time speaker names (speakers.service) look up profiles and
+// corrections; none here, so responses pass through unchanged.
+vi.mock("../../src/repositories/speakerProfile.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+vi.mock("../../src/repositories/correction.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+
 vi.mock("../../src/repositories/meeting.repository", () => ({
   exists: async (id: string) => store.meeting?.id === id,
   findById: async (id: string) =>

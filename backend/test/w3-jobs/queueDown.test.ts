@@ -12,6 +12,18 @@ const UPSTREAM_SECRET = "connect ECONNREFUSED 10.0.0.5:5432 password=hunter2";
 
 const calls = vi.hoisted(() => ({ started: 0, stopped: 0, progressWrites: 0 }));
 
+
+// Read-time speaker names (speakers.service) look up profiles and
+// corrections; none here, so responses pass through unchanged.
+vi.mock("../../src/repositories/speakerProfile.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+vi.mock("../../src/repositories/correction.repository", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  findByMeetingId: async () => [],
+}));
+
 vi.mock("../../src/lib/env", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/lib/env")>();
   return { env: { ...actual.env, jobsDriver: "pgboss" } };

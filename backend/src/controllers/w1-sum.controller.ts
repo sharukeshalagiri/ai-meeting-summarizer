@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { isValidTimezone } from "../lib/dates";
+import { withSpeakerNames } from "../services/speakers/speakers.service";
 import * as w1SumService from "../services/w1-sum.service";
 import { sendSuccess } from "../types/api";
 import { BadRequest } from "../types/errors";
@@ -27,11 +28,11 @@ const optionalNullable = (value: unknown, field: string): string | null | undefi
 
 export const getSummaryReview = asyncHandler(
   async (req: Request, res: Response) => {
-    const review = await w1SumService.getSummaryReview(
-      requireParam(req.params.id, "meeting id")
-    );
+    const id = requireParam(req.params.id, "meeting id");
+    const review = await w1SumService.getSummaryReview(id);
+    const { actionItems } = await withSpeakerNames({ id, actionItems: review.actionItems });
 
-    return sendSuccess(res, review, "Summary review fetched");
+    return sendSuccess(res, { ...review, actionItems }, "Summary review fetched");
   }
 );
 
@@ -48,15 +49,22 @@ export const updateMeetingMode = asyncHandler(
 
 export const resummarizeMeeting = asyncHandler(
   async (req: Request, res: Response) => {
-    const result = await w1SumService.resummarize(
-      requireParam(req.params.id, "meeting id"),
-      {
-        mode: req.body?.mode,
-        timezone: optionalTimezone(req.body?.timezone),
-      }
-    );
+    const id = requireParam(req.params.id, "meeting id");
+    const result = await w1SumService.resummarize(id, {
+      mode: req.body?.mode,
+      timezone: optionalTimezone(req.body?.timezone),
+    });
 
-    return sendSuccess(res, result, "Summary regenerated");
+    // The page puts this straight into its state, so it carries the
+    // current speaker names like the GETs do. A queued answer has
+    // summary and actionItems null, which pass through unchanged.
+    const { summary, actionItems } = await withSpeakerNames({
+      id,
+      summary: result.summary,
+      actionItems: result.actionItems,
+    });
+
+    return sendSuccess(res, { ...result, summary, actionItems }, "Summary regenerated");
   }
 );
 
@@ -67,8 +75,9 @@ export const reviewActionItem = asyncHandler(
     const task = optionalNullable(body.task, "task");
     const priority = optionalNullable(body.priority, "priority");
 
+    const id = requireParam(req.params.id, "meeting id");
     const result = await w1SumService.reviewActionItem(
-      requireParam(req.params.id, "meeting id"),
+      id,
       requireParam(req.params.itemId, "action item id"),
       body.action,
       {
@@ -80,6 +89,10 @@ export const reviewActionItem = asyncHandler(
       optionalTimezone(body.timezone)
     );
 
-    return sendSuccess(res, result, "Action item reviewed");
+    // An edited or accepted item is shown at once: current speaker names.
+    if ("deleted" in result) return sendSuccess(res, result, "Action item reviewed");
+    const [named] = (await withSpeakerNames({ id, actionItems: [result] })).actionItems;
+
+    return sendSuccess(res, named, "Action item reviewed");
   }
 );

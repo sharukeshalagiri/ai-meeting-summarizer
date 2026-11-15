@@ -14,6 +14,7 @@ import { MeetingStatus, ProcessingStage } from "../types/meeting";
 import { toSpeakerTranscript, type RawSegment } from "../types/segment";
 import { toJsonValue } from "../types/summary";
 import { diarizeSegments } from "../services/diarization.service";
+import { linkSegmentSpeakers } from "../services/speakers/attribute";
 import { indexMeeting } from "../services/embedding.service";
 import { transcribeAudioDetailed, type TranscribeOptions } from "../services/speech.service";
 import { cleanSegments, generateSummary } from "../services/summary.service";
@@ -223,10 +224,28 @@ export const diarize = async (job: JobContext<PipelineJob>) =>
       return;
     }
 
-    const diarized = asr.segments.length ? await diarizeSegments(asr.segments) : [];
+    // With the meeting context, uploads get the configured
+    // DIARIZATION_PROVIDER (voice by default) and SpeakerProfiles, like
+    // live capture; the whole recording is one "chunk" at offset 0.
+    const meeting = asr.segments.length ? await meetingRepo.findById(meetingId) : null;
+    const diarized = asr.segments.length
+      ? await diarizeSegments(asr.segments, {
+          meetingId,
+          filePath: meeting?.audioPath ? path.resolve(meeting.audioPath) : null,
+          channelLayout: job.data.channelLayout ?? "mono",
+          offsetMs: 0,
+          roster: [],
+        })
+      : [];
 
     await transcriptRepo.upsert(meetingId, asr.text);
     await segmentRepo.replaceForMeeting(meetingId, diarized);
+
+    // replaceForMeeting numbers the rows 0..n-1 in this order.
+    await linkSegmentSpeakers(
+      meetingId,
+      diarized.map((segment, idx) => ({ idx, text: segment.text, speakerId: segment.speakerId }))
+    );
 
     if (asr.durationMs > 0) {
       await meetingRepo.updateDuration(meetingId, Math.round(asr.durationMs / 1000));

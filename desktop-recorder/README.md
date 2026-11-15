@@ -61,9 +61,11 @@ $env:PYTHONPATH = "src"
 
 Open **Settings...** and set the backend API URL (e.g.
 `http://localhost:5000/api`), the web app URL (`http://localhost:5173`),
-the device token (the backend's `DEVICE_TOKEN`; leave it empty in
-development if the backend has none), and optionally the mic and output
-device.
+the device token, and optionally the mic and output device. The device
+token is required: sign in to the web app, open **Devices**, click
+**Create token** (kind: Desktop recorder) and paste it here (it is shown once;
+revoke it on the same page). The backend's old shared `DEVICE_TOKEN` is
+no longer accepted.
 
 ## Build the Windows app (PyInstaller)
 
