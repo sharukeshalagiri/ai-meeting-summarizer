@@ -55,6 +55,25 @@ describe("matchClusters", () => {
     ).toEqual([{ kind: "new" }]);
   });
 
+  it("voice B never matches voice A's centroid (measured: TTS Raj vs Priya 0.47-0.54)", () => {
+    // Cosine 0.50 between two different voices, like the lead's test.
+    const result = matchClusters(
+      [{ id: "priya", centroid: at(0) }],
+      [long(at(60))],
+      { chunkStartMs: 0, previousSpeakerId: "priya" }
+    );
+    expect(cosine(at(0), at(60))).toBeCloseTo(0.5);
+    expect(result).toEqual([{ kind: "new" }]);
+  });
+
+  it("a borderline match keeps the label but does not move the centroid", () => {
+    // cos(50 deg) = 0.64: above MATCH_SIMILARITY, below UPDATE_SIMILARITY.
+    const [match] = matchClusters([{ id: "a", centroid: at(0) }], [long(at(50))], {
+      chunkStartMs: 0,
+    });
+    expect(match).toMatchObject({ kind: "match", profileId: "a", update: false });
+  });
+
   it("is one-to-one: two clusters cannot take the same profile", () => {
     const result = matchClusters(
       [{ id: "a", centroid: at(0) }],

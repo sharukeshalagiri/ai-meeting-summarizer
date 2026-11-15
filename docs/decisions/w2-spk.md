@@ -109,6 +109,15 @@ remaining boundary splits are the first things to improve (a minimum
 cluster duration before creating a profile; merging profiles whose
 centroids converge).
 
+Centroid-update floor (`UPDATE_SIMILARITY = 0.65`), added after the
+engineer's live test where a second TTS voice (cosine 0.47-0.54 to the
+first) drifted onto the first speaker's profile: a match between 0.55
+and 0.65 keeps its label but no longer moves the centroid, so one mixed
+cluster cannot pull a profile toward every voice. Bench sweep of the
+floor (`--update`): speaker error 22.4% and 5 of 15 boundary splits at
+every value, i.e. neutral on AMI; it is a guard for the drift case, not
+an accuracy gain.
+
 Smoke test of the running service (port 5152): `POST /diarize` on a
 real 30 s stereo Opus chunk (silent mic, AMI on the right) returned
 one 256-d cluster plus one skipped short segment in 1.4 s cold (model

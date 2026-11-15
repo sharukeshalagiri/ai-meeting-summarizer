@@ -58,6 +58,7 @@ UPDATE_MARGIN = 0.05
 SHORT_CLUSTER_MS = 1000
 SHORT_MATCH_SIMILARITY = 0.4
 CONTINUITY_MS = 1500
+UPDATE_SIMILARITY = 0.65
 
 
 def rss_mb() -> float | None:
@@ -113,7 +114,9 @@ def update_centroid(current, incoming, speech_ms):
     return cluster.normalize((1 - a) * np.asarray(current) + a * np.asarray(incoming))
 
 
-def match_clusters(profiles, clusters, chunk_start_ms, previous_id, match_sim=MATCH_SIMILARITY):
+def match_clusters(
+    profiles, clusters, chunk_start_ms, previous_id, match_sim=MATCH_SIMILARITY, update_sim=None
+):
     """profiles: {id: centroid}; clusters: [(centroid, speech_ms, start_ms)]."""
     result = [None] * len(clusters)
     used = set()
@@ -133,7 +136,8 @@ def match_clusters(profiles, clusters, chunk_start_ms, previous_id, match_sim=MA
         if result[ci] or ids[pi] in used or s < match_sim:
             continue
         second = max([x for j, x in enumerate(sims[ci]) if j != pi and x == x] or [-1])
-        result[ci] = ("match", ids[pi], s - second >= UPDATE_MARGIN)
+        floor = UPDATE_SIMILARITY if update_sim is None else update_sim
+        result[ci] = ("match", ids[pi], s - second >= UPDATE_MARGIN and s >= floor)
         used.add(ids[pi])
     for ci, c in enumerate(clusters):
         if result[ci] or c[1] >= SHORT_CLUSTER_MS:
@@ -173,7 +177,7 @@ def embed_chunks(audio, turns, chunk_s, engine):
     return chunks
 
 
-def attribute(chunks, merge_sim, match_sim):
+def attribute(chunks, merge_sim, match_sim, update_sim=None):
     """Runs clustering + cross-chunk matching; returns per-chunk labels."""
     profiles: dict[str, np.ndarray] = {}
     previous = None
@@ -193,7 +197,7 @@ def attribute(chunks, merge_sim, match_sim):
                 (centroid, sum(weights) * 1000, min(segs[i]["start"] for i in members) * 1000, members)
             )
         matches = match_clusters(
-            profiles, [c[:3] for c in clusters], chunk["start"] * 1000, previous, match_sim
+            profiles, [c[:3] for c in clusters], chunk["start"] * 1000, previous, match_sim, update_sim
         )
         pred = [None] * len(segs)
         for c, (kind, pid, update) in zip(clusters, matches):
@@ -276,6 +280,9 @@ def main(argv=None):
     parser.add_argument("--minutes", type=float, default=10)
     parser.add_argument("--chunk-seconds", type=float, default=30)
     parser.add_argument("--out", help="write the JSON report here")
+    parser.add_argument("--merge", default="0.3,0.4,0.5,0.6", help="sweep values")
+    parser.add_argument("--match", default="0.35,0.45,0.55,0.65", help="sweep values")
+    parser.add_argument("--update", default="", help="centroid-update floors to sweep")
     args = parser.parse_args(argv)
 
     root = Path(__file__).resolve().parents[2]
@@ -323,11 +330,15 @@ def main(argv=None):
     }
 
     sweep = []
-    for merge_sim, match_sim in itertools.product(
-        (0.3, 0.4, 0.5, 0.6), (0.35, 0.45, 0.55, 0.65)
-    ):
+    grid = itertools.product(
+        [float(x) for x in args.merge.split(",")], [float(x) for x in args.match.split(",")]
+    )
+    for merge_sim, match_sim in grid:
         labelled, _ = attribute(chunks, merge_sim, match_sim)
         sweep.append({"merge": merge_sim, "match": match_sim, **score(chunks, labelled)})
+    for update_sim in [float(x) for x in args.update.split(",") if x]:
+        labelled, _ = attribute(chunks, cluster.MERGE_SIMILARITY, MATCH_SIMILARITY, update_sim)
+        sweep.append({"update_floor": update_sim, **score(chunks, labelled)})
     report["sweep"] = sweep
 
     text = json.dumps(report, indent=2)

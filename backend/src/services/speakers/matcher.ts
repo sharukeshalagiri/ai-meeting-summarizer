@@ -21,6 +21,15 @@ export const MATCH_SIMILARITY = 0.55;
  */
 export const UPDATE_MARGIN = 0.05;
 
+/**
+ * ...and must be at least this similar. A borderline match (0.55-0.65)
+ * keeps the label but never moves the centroid: one mixed or noisy
+ * cluster must not drag a speaker's voice toward someone else's, which
+ * is how one profile can end up matching every voice. Neutral on the
+ * AMI bench (docs/decisions/w2-spk.md).
+ */
+export const UPDATE_SIMILARITY = 0.65;
+
 /** Clusters with less speech than this get looser, label-only rules. */
 export const SHORT_CLUSTER_MS = 1000;
 
@@ -113,7 +122,8 @@ export const updateCentroid = (
  *
  * - Long clusters (>= 1 s): greedy by similarity, best pair first,
  *   accepted at >= MATCH_SIMILARITY. Centroid updated only when the
- *   match beats the second-best profile by UPDATE_MARGIN.
+ *   match is >= UPDATE_SIMILARITY and beats the second-best profile by
+ *   UPDATE_MARGIN.
  * - Short clusters: >= SHORT_MATCH_SIMILARITY, else the previous chunk's
  *   last remote speaker if the cluster starts within CONTINUITY_MS of
  *   the chunk start, else new. Short clusters never move a centroid.
@@ -159,7 +169,7 @@ export const matchClusters = (
       kind: "match",
       profileId: voiced[p].id,
       similarity: sim,
-      update: sim - secondBest(c, p) >= UPDATE_MARGIN,
+      update: sim >= UPDATE_SIMILARITY && sim - secondBest(c, p) >= UPDATE_MARGIN,
     };
     used.add(voiced[p].id);
   }
