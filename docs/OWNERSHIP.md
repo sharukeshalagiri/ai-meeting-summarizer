@@ -151,6 +151,12 @@ w2-bot slot=7
 
 w3-jobs slot=8
   backend/src/jobs/**
+  backend/test/captureContract.test.ts
+  backend/test/helpers/liveFakes.ts
+  backend/test/wiring/liveWiring.test.ts
+  docs/CAPTURE_CONTRACT.md
+  backend/Dockerfile
+  deploy/Caddyfile
   backend/src/services/meeting.service.ts
   backend/src/services/live.service.ts
   backend/src/lib/storage/**
