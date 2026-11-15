@@ -24,9 +24,11 @@ The current code is a working prototype of upload and browser-tab capture,
 plus the shared foundation for parallel work: the capture contract, the
 reserved schema, the UI contract, ownership rules and CI. Pair 1 has
 added stereo-aware transcription with faster-whisper (w1-asr) and the
-summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. The
-desktop recorder, auth, durable background jobs and evaluation do not
-exist yet. They are the waves' work.
+summary pipeline v2 (w1-sum), wired in by `chore/pair-1-wiring`. Pair 4
+has added durable background jobs on pg-boss, with progress over SSE
+(w3-jobs, wired in by `chore/pair-4-wiring`), and production Docker
+images, a compose file and a deploy guide (w3-infra). Auth does not
+exist yet. It is the waves' work.
 
 ## Operating mode (every session follows this)
 
@@ -81,28 +83,59 @@ the database and to Gemini.
 NewMeeting.tsx
   POST /api/meetings                         create Meeting (status CREATED)
   POST /api/meetings/:id/audio  (multer)     file -> backend/uploads/meetings
-  POST /api/meetings/:id/transcribe
+  POST /api/meetings/:id/process            202, returns at once (meeting.service startProcessing)
+        one queue per step (jobs/definitions.ts), singletonKey = meetingId;
+        each step commits, then queues the next and writes its processingStage
+  job meeting-transcribe   TRANSCRIBING
         speech.service -> transcription provider (TRANSCRIPTION_PROVIDER: local | deepgram)
           local: ai-service POST /transcribe { file_path (absolute), offset_ms, channel_layout, hints }
         parseSegments drops noSpeechProb > 0.75; segments keep channel + words
-        diarization.service (Gemini infers speakers from text)
-        -> Transcript + TranscriptSegment rows (channel, words), durationSec
-  POST /api/meetings/:id/summarize          202, returns at once
-        background, in-process (meeting.service startSummary):
-        processingStage SUMMARIZING -> DONE | FAILED
-        w1-sum pipeline v2 (CLASSIFY? CLEAN EXTRACT VERIFY) -> noiseLabel per segment
-          on error: processingError set, legacy generateSummary used instead
+        -> storage artifact artifacts/<meetingId>/asr.json (lib/storage)
+  job meeting-diarize      DIARIZING
+        diarization.service diarizeSegments
+        -> Transcript + TranscriptSegment rows (replaced; channel, words), durationSec
+           no segments -> NO_SPEECH, status COMPLETED (stops here)
+  job meeting-clean        CLEANING     CLEAN noise labels -> noiseLabel per segment
+  job meeting-summarize    SUMMARIZING  w1-sum pipeline v2 (CLASSIFY? CLEAN EXTRACT VERIFY)
+          on error: note in processingError, legacy generateSummary used instead
         -> Summary (data.schemaVersion 2, data.pipeline "v2" | "legacy"), ActionItem rows
-  MeetingDetails polls GET /api/meetings/:id every 5 s while SUMMARIZING
-  POST /api/meetings/:id/index
-        embedding.service -> SegmentEmbedding (float8[], unit-normalized)
+        -> processingStage DONE, status COMPLETED; asr.json removed
+  job meeting-index        (no stage)   embedding.service -> SegmentEmbedding (float8[], unit-normalized)
+  failure: transient kinds retried with backoff; then FAILED,
+        processingError "[STAGE/KIND] user-safe message" (jobs/errors.ts)
+  GET  /api/meetings/:id/events             SSE: progress rows, `event: end` once settled
+        NewMeeting / MeetingDetails / SummaryView follow it (useMeetingProgress);
+        fallback: poll GET /api/meetings/:id every 5 s
+  POST /api/meetings/:id/retry              202: segments exist -> from CLEAN, else transcribe again
 ```
 
-`POST /api/meetings/:id/upload` transcribes in the request, then starts
-the same background summary (`summary: null` in its response). The
-in-process job is lost if the backend restarts. Pair 4 (w3-jobs)
-replaces it with pg-boss. `POST /:id/resummarize` (w1-sum) is still a
-long synchronous request.
+The worker runs in the API process (`server.ts` starts it after
+`listen` and stops it on SIGTERM/SIGINT). Jobs live in Postgres, in
+pg-boss's own `pgboss` schema (not Prisma), so a run survives a backend
+restart. While any pipeline job for a meeting is waiting or running,
+process, summarize and retry queue nothing new and return the current
+state (still 202). The older endpoints still work on top of the jobs:
+
+- `POST /:id/transcribe` queues the pipeline and waits (up to
+  `TRANSCRIPTION_TIMEOUT_MINUTES`, then 504) for the transcript, which it
+  returns as before. The summary carries on as a job.
+- `POST /:id/summarize` (202) queues only the summarize job.
+- `POST /:id/upload` attaches the file and queues the pipeline. Its
+  response has `transcript: null`, `summary: null` and `processing`.
+- `POST /:id/resummarize` (w1-sum) queues a summarize job and waits up
+  to `RESUMMARIZE_WAIT_MS` (4.5 min). After that it answers 200
+  `{ queued: true, summary: null, actionItems: null, ... }` and the job
+  carries on. A re-summarize leaves `status` as it was, so a failure
+  shows only in `processingStage` FAILED.
+- `POST /:id/index` still indexes in the request.
+
+**When the queue is down** (pg-boss could not start; `server.ts` retries
+every 30 s), every route that queues work answers 503 "Background
+processing is unavailable right now. Try again shortly." before writing
+any stage. Reads still work. `GET /api/health` is always 200 and reports
+`queue: "up" | "down"`; `GET /api/health/ready` is 503 while it is down.
+The root `GET /health` is pure liveness.
+
 **The ai-service reads the file by path**, so it must share a filesystem
 with the backend.
 
@@ -125,9 +158,15 @@ Recorder (stereo: left = my mic, right = everyone else)
         session.elapsedMs = max(elapsedMs, startOffsetMs + durationMs)
         rolling summary every ROLLING_SUMMARY_MINUTES (best effort); chunk file kept
   POST /api/live/sessions/:id/roster {participants[]}   -> LiveSession.roster (name hints)
-  POST /api/live/sessions/:id/end                       final transcript + summary
+  POST /api/live/sessions/:id/end                       final transcript, then queues the summarize job
   reapStaleSessions (every 5 min) ends sessions idle > LIVE_SESSION_IDLE_MINUTES
 ```
+
+The rest of the live flow still runs in-process: chunk transcription,
+rolling summaries and the reaper (a `setInterval` in `server.ts`). Only
+the final summary is a durable job (`/end` calls the same
+`startSummary` as `POST /summarize`). The queues `live-assemble`,
+`live-late` and `live-reap` are created at boot but have no workers yet.
 
 The current web page (`useLiveCapture.ts`) still uses the **legacy** form
 of the chunk call: a `chunk` field with no `seq`. That path appends in
@@ -224,8 +263,13 @@ Run from a directory that has its own `package.json`, the `--prefix` form
 adds the root package as a `file:..` dependency.
 
 - The backend runs without the ai-service: everything except
-  transcription works, and `/transcribe` returns a 502 with "Could not
-  reach the transcription service" (smoke-tested).
+  transcription works. The transcribe job retries with backoff (about
+  2 minutes), then the meeting is FAILED with `[TRANSCRIBING/ASR_UNREACHABLE]`
+  and `/transcribe` returns a 502 "The transcription service could not
+  be reached. Check that it is running, then retry." (smoke-tested
+  before Pair 4, not since).
+- Background jobs need Postgres (pg-boss, the default). `JOBS_DRIVER=memory`
+  runs them in-process instead, lost on restart.
 - `npm run setup:ai` installs faster-whisper (no torch), with PyAV pinned
   `<19`. For tests only, `npm run setup:ai:test` installs fastapi, httpx,
   python-multipart and pytest. The tests stub out `faster_whisper`.
@@ -234,6 +278,17 @@ adds the root package as a `file:..` dependency.
   `npm --prefix backend run generate` after editing `schema.prisma`.
 - New migration: `cd backend && npx prisma migrate dev --name <name>`.
   Commit the migration folder.
+
+### Deploy
+
+Production runs on one Linux host with
+[`docker-compose.prod.yml`](docker-compose.prod.yml): Caddy (TLS, single
+origin), web (nginx), backend, a one-shot `migrate` service that the
+backend waits for, ai-service and Postgres. Secrets come only from
+`deploy/.env` (copied from `deploy/.env.example`, ignored by git).
+Hosting options, update, rollback and backups are in
+[`deploy/README.md`](deploy/README.md). The images have not been built
+in CI yet, and the release workflow is not merged.
 
 ### Environment variables
 
@@ -268,6 +323,9 @@ fails at boot):
 | `TRANSCRIPTION_PROVIDER` | local | `local` (ai-service) or `deepgram`; anything else fails at boot |
 | `DEEPGRAM_API_KEY` | unset | required when the provider is `deepgram` (paid per audio minute) |
 | `DEEPGRAM_MODEL` | nova-2 | |
+| `JOBS_DRIVER` | pgboss | `pgboss` (durable, in Postgres; creates its own `pgboss` schema) or `memory` (in-process, lost on restart); anything else fails at boot. Always `memory` under `NODE_ENV=test` |
+| `STORAGE_DRIVER` | local | `lib/storage` driver; only `local` exists, anything else fails at boot. Today it holds the pipeline's job artifacts; uploads still go to `UPLOAD_DIR` |
+| `STORAGE_DIR` | uploads | root of local storage, relative to backend/ |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
 precedence): `AI_SERVICE_PORT` (8000), `WHISPER_MODEL` (small), `WHISPER_DEVICE`
@@ -415,7 +473,9 @@ non-obvious code. Keep doing that.
   `vitest.config.mts` supplies placeholder `DATABASE_URL` and
   `GEMINI_API_KEY`, sends uploads to a temp dir and leaves `DEVICE_TOKEN`
   unset, so modules that import `lib/env.ts` load without a real `.env`.
-  Unit tests must not hit the network or the database. Export pure
+  Unit tests must not hit the network or the database. Jobs always use
+  the in-process memory driver under `NODE_ENV=test`, so job routes need
+  no setup (see `test/w3-jobs/`). Export pure
   helpers (like `parseSegments`) so they can be tested without either.
 - Route-level tests use supertest on `createApp()`, with repositories and
   upstream services replaced by `vi.mock`. See `test/captureContract.test.ts`
