@@ -207,6 +207,8 @@ w4-acct slot=10
   backend/vitest.config.mts
   backend/test/setup*
   backend/test/deviceAuth.test.ts
+  backend/src/services/actionItem.service.ts
+  backend/src/services/transcript.service.ts
   backend/src/jobs/definitions.ts
   backend/src/jobs/worker.ts
   backend/src/services/diarization.service.ts
