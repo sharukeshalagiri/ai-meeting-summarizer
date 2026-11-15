@@ -6,7 +6,12 @@ import * as correctionRepo from "../repositories/correction.repository";
 import * as meetingRepo from "../repositories/meeting.repository";
 import * as segmentRepo from "../repositories/segment.repository";
 import * as summaryRepo from "../repositories/summary.repository";
-import { BadRequest, NotFound } from "../types/errors";
+import { Queues } from "../jobs/definitions";
+import { parseFailure } from "../jobs/errors";
+import { assertJobsAvailable, enqueue, getQueue, waitForJob } from "../jobs/index";
+import { trySetProgress } from "../jobs/progress";
+import { AppError, BadRequest, NotFound } from "../types/errors";
+import { MeetingStatus, ProcessingStage } from "../types/meeting";
 import {
   asPriority,
   isModeSetting,
@@ -200,16 +205,110 @@ export interface ResummarizeOptions {
   timezone?: string | null;
   /** Persists CLEAN labels; defaults to segment.repository setNoiseLabels. */
   writeNoiseLabels?: (labels: NoiseLabelUpdate[]) => Promise<void>;
+  /**
+   * Run the pipeline in this call. Only the summarize job sets it; every
+   * other caller (POST /resummarize) queues that job instead, so the run
+   * survives a restart and shares the meeting's one-at-a-time slot.
+   */
+  runNow?: boolean;
 }
+
+/**
+ * How long POST /resummarize waits for its job before answering that
+ * the summary is still being generated (the meeting page follows the
+ * job over SSE either way). Below Node's 5-minute request timeout.
+ */
+export const RESUMMARIZE_WAIT_MS = 4.5 * 60 * 1000;
+
+/**
+ * POST /resummarize: records the mode, queues a summarize job and waits
+ * for it, so the response keeps its shape ({ summary, actionItems }).
+ * If the wait runs out, it answers { queued: true, summary: null } and
+ * the job carries on.
+ */
+const queueResummarize = async (
+  meetingId: string,
+  options: ResummarizeOptions
+) => {
+  // Before anything is written: a SUMMARIZING stage with no job behind
+  // it would leave the page waiting forever.
+  assertJobsAvailable();
+
+  if (options.mode !== undefined && options.mode !== null) {
+    await setMode(meetingId, options.mode);
+  } else {
+    await loadMeeting(meetingId);
+  }
+
+  // Checked here so a meeting with nothing to summarize gets a 400 now
+  // rather than a failed job.
+  if ((await segmentRepo.findByMeetingId(meetingId)).length === 0) {
+    throw BadRequest(
+      "This meeting has no transcript segments yet. Transcribe it first."
+    );
+  }
+
+  await trySetProgress(meetingId, {
+    stage: ProcessingStage.SUMMARIZING,
+    progress: 0,
+    error: null,
+  });
+
+  let jobId = await enqueue(
+    Queues.SUMMARIZE,
+    { meetingId, origin: "resummarize", timezone: options.timezone ?? null },
+    { singletonKey: meetingId }
+  );
+
+  // A summarize job is already waiting for this meeting: wait for it.
+  if (!jobId) {
+    const queue = await getQueue();
+    const pending = await queue.pending(Queues.SUMMARIZE, meetingId);
+    jobId = pending.find((job) => job.state !== "active")?.id ?? pending[0]?.id ?? null;
+  }
+
+  const state = jobId
+    ? await waitForJob(Queues.SUMMARIZE, jobId, RESUMMARIZE_WAIT_MS)
+    : "completed";
+
+  if (state === "timeout") {
+    return {
+      queued: true,
+      meetingId,
+      status: MeetingStatus.PROCESSING,
+      processingStage: ProcessingStage.SUMMARIZING,
+      summary: null,
+      actionItems: null,
+    };
+  }
+
+  const meeting = await loadMeeting(meetingId);
+
+  if (state !== "completed" || meeting.processingStage === ProcessingStage.FAILED) {
+    throw new AppError(
+      parseFailure(meeting.processingError)?.message ??
+        "The summary could not be generated. Retry from the meeting page.",
+      502
+    );
+  }
+
+  return {
+    summary: meeting.summary,
+    actionItems: await actionItemRepo.findByMeetingId(meetingId),
+  };
+};
 
 /**
  * Runs the v2 pipeline over the meeting's stored segments and saves the
  * summary and action items. Human-reviewed action items survive.
+ * Without `runNow` it queues the run as a job (see queueResummarize).
  */
 export const resummarize = async (
   meetingId: string,
   options: ResummarizeOptions = {}
 ) => {
+  if (!options.runNow) return queueResummarize(meetingId, options);
+
   if (options.mode !== undefined && options.mode !== null) {
     await setMode(meetingId, options.mode);
   }

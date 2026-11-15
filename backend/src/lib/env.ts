@@ -92,6 +92,34 @@ const transcriptionProvider = (): "local" | "deepgram" => {
 };
 
 /**
+ * Where background jobs run (w3-jobs): "pgboss" (durable, in Postgres;
+ * the default) or "memory" (in-process, lost on restart). Tests always
+ * use "memory" so they never need a database.
+ */
+const jobsDriver = (): "pgboss" | "memory" => {
+  if (process.env.NODE_ENV === "test") return "memory";
+
+  const value = optional("JOBS_DRIVER", "pgboss").trim().toLowerCase();
+
+  if (value !== "pgboss" && value !== "memory") {
+    throw new Error(`JOBS_DRIVER must be "pgboss" or "memory", got "${value}".`);
+  }
+
+  return value;
+};
+
+/** Storage driver for recordings and job artifacts. Only "local" exists. */
+const storageDriver = (): "local" => {
+  const value = optional("STORAGE_DRIVER", "local").trim().toLowerCase();
+
+  if (value !== "local") {
+    throw new Error(`STORAGE_DRIVER must be "local", got "${value}".`);
+  }
+
+  return value;
+};
+
+/**
  * Speaker diarization (w2-spk): voice (ai-service speaker embeddings,
  * default), text (Gemini infers turns), or deepgram (paid per minute,
  * needs DEEPGRAM_API_KEY). Voice falls back to text when unavailable.
@@ -178,6 +206,12 @@ export const env = {
   /** nova-2 takes `keywords`; nova-3 models take `keyterm` instead. */
   deepgramModel: optional("DEEPGRAM_MODEL", "nova-2"),
 
+  /** See jobsDriver() above (w3-jobs). */
+  jobsDriver: jobsDriver(),
+  /** See storageDriver() above. */
+  storageDriver: storageDriver(),
+  /** Root of local storage (recordings, job artifacts), relative to backend/. */
+  storageDir: optional("STORAGE_DIR", "uploads"),
   /** See diarizationProvider() above. */
   diarizationProvider: diarizationProvider(),
   /** Label for the user's own (mic channel) segments until renamed. */

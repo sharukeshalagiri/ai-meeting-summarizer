@@ -168,10 +168,29 @@ export interface SummaryReview {
   actionItems: ActionItemRow[];
 }
 
-export interface ResummarizeResult {
+/** POST /resummarize when the job finished within the request's wait. */
+export interface ResummarizeDone {
+  queued?: false;
   summary: { id: string; content: string; data: unknown };
   actionItems: ActionItemRow[];
 }
+
+/**
+ * POST /resummarize when the job is still running after the wait
+ * (w3-jobs): follow GET /meetings/:id/events until processingStage is
+ * DONE (then refetch) or FAILED. The meeting's status stays COMPLETED
+ * throughout, so failure is detected by the stage.
+ */
+export interface ResummarizeQueued {
+  queued: true;
+  meetingId: string;
+  status: string;
+  processingStage: string;
+  summary: null;
+  actionItems: null;
+}
+
+export type ResummarizeResult = ResummarizeDone | ResummarizeQueued;
 
 export type ReviewAction = "accept" | "edit" | "reject";
 

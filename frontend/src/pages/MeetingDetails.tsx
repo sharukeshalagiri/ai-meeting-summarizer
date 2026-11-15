@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { API_BASE_URL, getData, getErrorMessage, postData } from "../api/api";
+import { API_BASE_URL, getData, getErrorMessage } from "../api/api";
+import { retryProcessing } from "../api/w3-jobs";
 import ErrorState from "../components/ErrorState";
+import ProgressSteps from "../components/progress/ProgressSteps";
+import {
+  failedStage,
+  failureMessage,
+  isActiveStage,
+} from "../components/progress/stages";
+import { useMeetingProgress } from "../components/progress/useMeetingProgress";
 import { Skeleton } from "../components/Skeleton";
 import StatusBadge from "../components/StatusBadge";
 import SummaryView from "../components/SummaryView";
@@ -9,12 +17,7 @@ import TranscriptView from "../components/TranscriptView";
 import { useFetch } from "../hooks/useFetch";
 import { AudioPlayer } from "../lib/audio/AudioPlayer";
 import { AudioPlayerProvider } from "../lib/audio/AudioPlayerProvider";
-import type {
-  Meeting,
-  Segment,
-  Summary,
-  Transcript,
-} from "../types/meeting";
+import type { Meeting, Segment } from "../types/meeting";
 import { formatDate, formatDuration } from "../utils/format";
 
 const TABS = [
@@ -23,16 +26,6 @@ const TABS = [
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
-
-/** How often the page re-reads a meeting whose summary is running. */
-const POLL_EVERY_MS = 5_000;
-
-/**
- * When to stop polling and offer a retry. The summary runs in-process
- * on the backend, so a server restart loses it and the stage would stay
- * SUMMARIZING forever (Pair 4 moves it to a job queue).
- */
-const POLL_LIMIT_MS = 20 * 60 * 1000;
 
 function MeetingDetails() {
   const { id } = useParams();
@@ -49,43 +42,35 @@ function MeetingDetails() {
     setData: setMeeting,
   } = useFetch<Meeting>(`/meetings/${id}`);
 
-  // The summary runs in the background after POST /summarize (or live
-  // /end); poll quietly (no skeleton) until the stage changes.
-  const summarizing = meeting?.processingStage === "SUMMARIZING";
-  const [pollExpired, setPollExpired] = useState(false);
-
-  useEffect(() => {
-    if (!summarizing || !id) return;
-
-    const startedAt = Date.now();
-    let cancelled = false;
-
-    const timer = window.setInterval(() => {
-      if (Date.now() - startedAt > POLL_LIMIT_MS) {
-        window.clearInterval(timer);
-        setPollExpired(true);
-        return;
-      }
-
-      getData<Meeting>(`/meetings/${id}`)
-        .then((next) => {
-          if (!cancelled) setMeeting(next);
-        })
-        .catch((err) => {
-          // A missed poll is retried on the next tick.
-          console.error(err);
-        });
-    }, POLL_EVERY_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [summarizing, id, setMeeting]);
-
-  const { data: segments } = useFetch<Segment[]>(
+  const { data: segments, setData: setSegments } = useFetch<Segment[]>(
     `/meetings/${id}/segments`
   );
+
+  // Processing runs as durable background jobs (w3-jobs): follow it
+  // over SSE while a stage is active, then re-read the meeting quietly
+  // (no skeleton) once it settles.
+  const active =
+    meeting != null &&
+    (isActiveStage(meeting.processingStage) || meeting.status === "PROCESSING");
+
+  const reload = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [next, nextSegments] = await Promise.all([
+        getData<Meeting>(`/meetings/${id}`),
+        getData<Segment[]>(`/meetings/${id}/segments`),
+      ]);
+      setMeeting(next);
+      setSegments(nextSegments);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [id, setMeeting, setSegments]);
+
+  const { progress } = useMeetingProgress(id, {
+    enabled: active,
+    onSettled: () => void reload(),
+  });
 
   const [tab, setTab] = useState<TabKey>(
     focusMs != null ? "transcript" : "summary"
@@ -98,34 +83,31 @@ function MeetingDetails() {
     [segments]
   );
   const showTranscript = useCallback(() => setTab("transcript"), []);
-  const [retrying, setRetrying] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
-  /** Lets the user recover a meeting whose pipeline failed midway. */
-  const retryProcessing = async () => {
+  /**
+   * Lets the user recover a meeting whose pipeline failed midway: one
+   * POST /retry (202) resumes from the right step (from CLEAN when the
+   * transcript exists, else a fresh transcription).
+   */
+  const retry = async () => {
+    if (!id || !meeting) return;
     setRetryError(null);
-    setPollExpired(false);
+    setRetrying(true);
 
     try {
-      if (!meeting?.transcript) {
-        setRetrying("Transcribing");
-        await postData<Transcript>(
-          `/meetings/${id}/transcribe`,
-          undefined,
-          { timeout: 15 * 60 * 1000 }
-        );
-      }
-
-      setRetrying("Generating summary");
-      await postData<Summary>(`/meetings/${id}/summarize`, undefined, {
-        timeout: 10 * 60 * 1000,
+      const state = await retryProcessing(id);
+      setMeeting({
+        ...meeting,
+        status: state.status,
+        processingStage: state.processingStage,
+        processingError: null,
       });
-
-      await refetch();
     } catch (err) {
       console.error(err);
       setRetryError(getErrorMessage(err));
     } finally {
-      setRetrying(null);
+      setRetrying(false);
     }
   };
 
@@ -154,13 +136,12 @@ function MeetingDetails() {
     );
   }
 
-  // A summary still marked as running after the poll limit is treated
-  // as lost, so the retry button comes back.
-  const summaryStuck = summarizing && pollExpired;
-  const isProcessing =
-    (meeting.status === "PROCESSING" || meeting.status === "LIVE") &&
-    !summaryStuck;
-  const hasFailed = meeting.status === "FAILED" || summaryStuck;
+  // The live row from the stream wins while a run is being followed.
+  const stage = (active && progress?.processingStage) || meeting.processingStage;
+  const processingError = active && progress ? progress.processingError : meeting.processingError;
+  const running = active && (progress == null || isActiveStage(progress.processingStage));
+  const isProcessing = running || meeting.status === "LIVE";
+  const hasFailed = meeting.status === "FAILED" || stage === "FAILED";
   // A live capture with no speech has nothing to summarize or retry.
   const noSpeech = meeting.processingStage === "NO_SPEECH";
   const incomplete = !noSpeech && (hasFailed || !meeting.summary);
@@ -222,32 +203,24 @@ function MeetingDetails() {
         </div>
       )}
 
-      {retrying && (
-        <p className="step step-active">
-          <span className="spinner" /> {retrying}...
-        </p>
-      )}
-
-      {meeting.processingError && !summarizing && (
+      {processingError && !running && (
         <p className="muted tiny" role="status">
-          {meeting.processingError}
+          {failureMessage(processingError)}
         </p>
       )}
 
-      {summarizing && !summaryStuck && !retrying && (
-        <p className="step step-active" role="status">
-          <span className="spinner" /> Summarizing... This can take a few
-          minutes; the page updates by itself.
-        </p>
-      )}
-
-      {isProcessing && !summarizing && !retrying && (
-        <div className="card">
-          <p>
-            {meeting.status === "LIVE"
-              ? "This meeting is being captured right now."
-              : "This meeting is still being processed."}
+      {running && (
+        <div className="card" role="status">
+          <ProgressSteps stage={stage} />
+          <p className="muted tiny" style={{ marginBottom: 0 }}>
+            This can take a few minutes; the page updates by itself.
           </p>
+        </div>
+      )}
+
+      {meeting.status === "LIVE" && !running && (
+        <div className="card">
+          <p>This meeting is being captured right now.</p>
           <button
             type="button"
             className="secondary"
@@ -255,6 +228,15 @@ function MeetingDetails() {
           >
             Refresh
           </button>
+        </div>
+      )}
+
+      {hasFailed && !running && (
+        <div className="card">
+          <ProgressSteps
+            stage={failedStage(meeting.processingError)}
+            failed
+          />
         </div>
       )}
 
@@ -268,7 +250,7 @@ function MeetingDetails() {
         </div>
       )}
 
-      {incomplete && !isProcessing && !retrying && (
+      {incomplete && !isProcessing && (
         <div className="card">
           <p>
             {hasFailed
@@ -276,8 +258,12 @@ function MeetingDetails() {
               : "This meeting has no summary yet."}
           </p>
 
-          <button type="button" onClick={() => void retryProcessing()}>
-            {meeting.transcript ? "Generate summary" : "Retry processing"}
+          <button type="button" disabled={retrying} onClick={() => void retry()}>
+            {retrying
+              ? "Starting..."
+              : meeting.transcript
+                ? "Generate summary"
+                : "Retry processing"}
           </button>
         </div>
       )}
