@@ -13,47 +13,135 @@ model User {
   email     String   @unique
   createdAt DateTime @default(now())
 
-  meetings  Meeting[]
+  /// argon2id hash (w4-acct). Null until a password is set (CLI or
+  /// sign-up); a user without one cannot sign in.
+  passwordHash          String?
+  /// The user's own label in transcripts ("You" until set).
+  displayName           String?
+  /// IANA zone for resolving spoken dates; null = UTC.
+  timezone              String?
+  /// Mode applied when a meeting arrives without one (or with AUTO).
+  defaultMode           String   @default("AUTO")
+  /// "local" | "deepgram"; null = the server's TRANSCRIPTION_PROVIDER.
+  transcriptionProvider String?
+  /// Personal vocabulary, fed into transcription and summary hints.
+  glossary              String[] @default([])
+  /// KEEP | AFTER_PROCESSING | AFTER_DAYS (audioRetentionDays).
+  audioRetention        String   @default("KEEP")
+  audioRetentionDays    Int?
+
+  meetings     Meeting[]
+  sessions     Session[]
+  deviceTokens DeviceToken[]
+  series       Series[]
+  chatMessages ChatMessage[]
+}
+
+/// A browser login session (express-session store, w4-acct).
+model Session {
+  /// express-session's session id (the cookie value is signed).
+  sid       String   @id
+  /// Serialized session data.
+  data      Json
+  expiresAt DateTime
+
+  /// Set once the session is logged in, so all of a user's sessions
+  /// can be listed or revoked.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@index([userId])
+}
+
+/// A per-user Bearer token for a recorder (extension, desktop app).
+/// Only the SHA-256 of the token is stored; it is shown once on create.
+model DeviceToken {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String
+  /// EXTENSION | DESKTOP | OTHER
+  kind      String @default("OTHER")
+  tokenHash String @unique
+  /// First characters of the token, for recognising it in the list.
+  prefix    String
+
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// A recurring meeting (weekly 1:1, project sync): links meetings so a
+/// summary can say what changed since last time.
+model Series {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  meetings Meeting[]
+
+  @@unique([userId, name])
 }
 
 model Meeting {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   title       String
   description String?
-  status      String   @default("CREATED")
+  status      String  @default("CREATED")
 
   /// UPLOAD for a recorded file, LIVE for a captured browser tab.
-  source      String   @default("UPLOAD")
+  source   String  @default("UPLOAD")
   /// Conferencing platform a live meeting was captured from, when known.
-  platform    String?
+  platform String?
 
-  audioPath   String?
+  audioPath String?
 
   /// Wall-clock length in seconds. Derived from the last transcript
   /// segment for uploads and from session elapsed time for live
   /// meetings, so analytics can aggregate without re-reading audio.
   durationSec Int?
 
-  startedAt   DateTime?
-  endedAt     DateTime?
+  startedAt DateTime?
+  endedAt   DateTime?
 
   /// GENERAL | LECTURE | INTERVIEW | PROJECT | ONE_ON_ONE | AUTO. Picks
   /// the summary flavour; AUTO lets the summarizer decide.
-  mode        String   @default("AUTO")
+  mode String @default("AUTO")
 
   /// Background-job progress (Wave 3). Null until a job reports.
   processingStage    String?
   processingProgress Int?
   processingError    String?
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  transcript   Transcript?
-  summary      Summary?
-  liveSession  LiveSession?
+  /// Recurring series this meeting belongs to (w4-acct).
+  seriesId String?
+  series   Series? @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+
+  /// When the retention job deleted the recording (audioPath is then null).
+  audioDeletedAt DateTime?
+
+  transcript  Transcript?
+  summary     Summary?
+  liveSession LiveSession?
 
   segments     TranscriptSegment[]
   actionItems  ActionItem[]
@@ -63,16 +151,18 @@ model Meeting {
 
   @@index([createdAt])
   @@index([source])
+  @@index([userId, createdAt])
+  @@index([seriesId])
 }
 
 model Transcript {
-  id          String   @id @default(uuid())
-  content     String   @db.Text
+  id      String @id @default(uuid())
+  content String @db.Text
 
-  meetingId   String   @unique
-  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meetingId String  @unique
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 /// One timestamped, speaker-attributed slice of a transcript.
@@ -82,21 +172,21 @@ model Transcript {
 /// meetings recorded before diarization existed, while segments drive
 /// the reader UI, citations, and embeddings.
 model TranscriptSegment {
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
   meetingId String
-  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   /// Position in the transcript. Unique per meeting so re-running
   /// transcription replaces segments deterministically.
-  idx       Int
+  idx Int
 
-  speaker   String   @default("Speaker 1")
-  text      String   @db.Text
+  speaker String @default("Speaker 1")
+  text    String @db.Text
 
   /// Offsets from the start of the recording, in milliseconds.
-  startMs   Int
-  endMs     Int
+  startMs Int
+  endMs   Int
 
   /// "mic" (left channel, the user) | "remote" (right channel) | null
   /// for mono or pre-stereo audio.
@@ -109,7 +199,7 @@ model TranscriptSegment {
   /// Word-level timings: [{ w, startMs, endMs, p? }].
   words      Json?
 
-  speakerId String?
+  speakerId      String?
   speakerProfile SpeakerProfile? @relation(fields: [speakerId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
@@ -124,41 +214,41 @@ model TranscriptSegment {
 /// A distinct speaker within one meeting, from diarization or a manual
 /// rename. Roster names live on LiveSession.roster, not here.
 model SpeakerProfile {
-  id          String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  meetingId   String
-  meeting     Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meetingId String
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   /// Stable label within the meeting, e.g. "Speaker 1" or "mic".
   label       String
   /// Human name once known; null while anonymous.
   displayName String?
   /// Mean voice embedding; empty until acoustic diarization exists.
-  centroid    Float[]  @default([])
+  centroid    Float[] @default([])
   /// DIARIZATION | MANUAL | ENROLLED
-  source      String   @default("DIARIZATION")
+  source      String  @default("DIARIZATION")
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  segments    TranscriptSegment[]
+  segments TranscriptSegment[]
 
   @@unique([meetingId, label])
 }
 
 /// A user's fix to model output, kept as training/eval signal.
 model Correction {
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
   meetingId String
-  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   /// What was corrected, e.g. SPEAKER, TRANSCRIPT_TEXT, ACTION_ITEM.
-  kind      String
+  kind     String
   /// Id of the corrected row (or a segment idx as a string); optional.
-  targetId  String?
-  before    Json
-  after     Json
+  targetId String?
+  before   Json
+  after    Json
 
   createdAt DateTime @default(now())
 
@@ -181,8 +271,8 @@ model SegmentEmbedding {
   /// has no pgvector -- see docs/DECISIONS.md.
   embedding Float[]
 
-  model     String
-  dims      Int
+  model String
+  dims  Int
 
   createdAt DateTime @default(now())
 
@@ -190,10 +280,10 @@ model SegmentEmbedding {
 }
 
 model Summary {
-  id        String   @id @default(cuid())
-  meetingId String   @unique
+  id        String @id @default(cuid())
+  meetingId String @unique
   /// Markdown rendering, kept for display and for older rows.
-  content   String   @db.Text
+  content   String @db.Text
   /// Structured meeting intelligence from Gemini; null for summaries
   /// created before structured output was introduced.
   data      Json?
@@ -214,19 +304,19 @@ model Summary {
 /// meetings (open tasks by owner, completion rate) and because their
 /// status changes independently of the summary that produced them.
 model ActionItem {
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
   meetingId String
-  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
-  task      String   @db.Text
-  owner     String?
+  task    String  @db.Text
+  owner   String?
   /// Kept as free text: the model quotes deadlines as spoken
   /// ("end of next sprint"), which does not always resolve to a date.
-  dueDate   String?
+  dueDate String?
 
-  priority  String   @default("MEDIUM")
-  status    String   @default("PENDING")
+  priority String @default("MEDIUM")
+  status   String @default("PENDING")
 
   /// Deadline exactly as spoken ("by Friday"); dueDate may later hold a
   /// resolved date.
@@ -238,11 +328,11 @@ model ActionItem {
   /// Supporting segments: [{ idx, quote? }] using TranscriptSegment.idx.
   evidence    Json?
   /// True when the item should be confirmed by a human before trusting.
-  needsReview Boolean  @default(false)
+  needsReview Boolean @default(false)
 
   completedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([meetingId])
   @@index([status])
@@ -250,21 +340,21 @@ model ActionItem {
 
 /// A browser-tab capture in progress.
 model LiveSession {
-  id        String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  meetingId String   @unique
-  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  meetingId String  @unique
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
   /// ACTIVE while chunks are arriving, ENDED once finalized.
-  status    String   @default("ACTIVE")
-  platform  String?
+  status   String  @default("ACTIVE")
+  platform String?
 
-  chunkCount      Int  @default(0)
+  chunkCount      Int @default(0)
   /// Total captured audio, advanced by each chunk's duration.
-  elapsedMs       Int  @default(0)
+  elapsedMs       Int @default(0)
   /// Elapsed mark at which the last rolling summary was produced, so
   /// the interval survives a server restart.
-  lastRollingAtMs Int  @default(0)
+  lastRollingAtMs Int @default(0)
 
   lastChunkAt DateTime?
   startedAt   DateTime  @default(now())
@@ -272,12 +362,12 @@ model LiveSession {
 
   /// EXTENSION | DESKTOP | WEB | BOT; null for sessions before the
   /// capture contract.
-  source    String?
+  source String?
   /// Free-text context from the recorder (agenda, jargon, names).
-  hints     String[]  @default([])
+  hints  String[] @default([])
   /// Participant names reported by the recorder; name hints for
   /// diarization, not speaker rows.
-  roster    String[]  @default([])
+  roster String[] @default([])
 
   rollingSummaries RollingSummary[]
   chunks           LiveChunk[]
@@ -286,40 +376,40 @@ model LiveSession {
 /// One uploaded chunk under the capture contract, keyed by (sessionId,
 /// seq) so retries are idempotent and late chunks land in order.
 model LiveChunk {
-  id            String      @id @default(uuid())
+  id String @id @default(uuid())
 
-  sessionId     String
-  session       LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String
+  session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   seq           Int
   path          String
   startOffsetMs Int
   durationMs    Int
   /// "stereo-mic-left" | "mono"
-  channelLayout String      @default("mono")
+  channelLayout String  @default("mono")
   /// RECEIVED | PROCESSING | TRANSCRIBED | FAILED
-  status        String      @default("RECEIVED")
+  status        String  @default("RECEIVED")
   error         String?
-  segmentCount  Int         @default(0)
+  segmentCount  Int     @default(0)
   /// Response body replayed for duplicate uploads.
   result        Json?
 
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([sessionId, seq])
 }
 
 /// Point-in-time summary generated while a live meeting runs.
 model RollingSummary {
-  id        String      @id @default(uuid())
+  id String @id @default(uuid())
 
   sessionId String
   session   LiveSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   /// Elapsed milliseconds covered at the time of generation.
-  atMs      Int
-  data      Json
+  atMs Int
+  data Json
 
   createdAt DateTime @default(now())
 
@@ -328,7 +418,7 @@ model RollingSummary {
 
 /// Turn in an AI chat conversation grounded in transcripts.
 model ChatMessage {
-  id             String @id @default(uuid())
+  id String @id @default(uuid())
 
   /// Groups turns into a thread. Scoped per meeting, or to the
   /// workspace-wide thread when meetingId is null.
@@ -338,9 +428,14 @@ model ChatMessage {
   meetingId String?
   meeting   Meeting? @relation(fields: [meetingId], references: [id], onDelete: Cascade)
 
+  /// Owner of the thread (w4-acct). Needed for workspace-wide threads,
+  /// which have no meeting to scope by. Null for rows before accounts.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   /// "user" or "assistant".
-  role      String
-  content   String   @db.Text
+  role    String
+  content String @db.Text
 
   /// Segment references backing an assistant answer.
   citations Json?
@@ -348,4 +443,5 @@ model ChatMessage {
   createdAt DateTime @default(now())
 
   @@index([conversationId, createdAt])
+  @@index([userId])
 }
