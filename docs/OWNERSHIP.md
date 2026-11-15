@@ -157,6 +157,7 @@ w3-jobs slot=8
   docs/CAPTURE_CONTRACT.md
   backend/Dockerfile
   deploy/Caddyfile
+  backend/src/repositories/actionItem.repository.ts
   backend/src/services/meeting.service.ts
   backend/src/services/live.service.ts
   backend/src/lib/storage/**
