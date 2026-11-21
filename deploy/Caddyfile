@@ -1,12 +1,24 @@
 # Reverse proxy for docker-compose.prod.yml.
 #
-# DOMAIN comes from deploy/.env.With a real domain whose DNS A/AAAA
+# DOMAIN comes from deploy/.env. With a real domain whose DNS A/AAAA
 # record points at this host, Caddy obtains and renews a Let's Encrypt
 # certificate automatically. With DOMAIN=localhost it serves a local,
 # self-signed certificate (fine for a smoke test).
 
 {$DOMAIN:localhost} {
 	encode zstd gzip
+
+	# Security headers for the app and the API (one origin, so one place).
+	# microphone=(self): the web Live page records the mic. No CSP yet:
+	# see docs/DECISIONS.md ("Security headers at the proxy").
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), payment=(), microphone=(self)"
+		-Server
+	}
 
 	# API, capture contract and audio playback (Range requests pass through).
 	handle /api/* {

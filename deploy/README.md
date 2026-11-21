@@ -160,6 +160,24 @@ Then point the recorders at the server:
   `https://<DOMAIN>`.
 - Revoking a token on the Devices page stops that recorder at once.
 
+### Public demo (optional)
+
+To give visitors a **Try the demo** button (a read-only account with
+three synthetic meetings, no sign-up), set `DEMO_MODE=true` in
+`deploy/.env`, run `up -d` again, then seed it once:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file deploy/.env exec backend \
+  node dist/demo/seed.js
+```
+
+The seed makes no Gemini or Whisper calls, speaks the meetings with
+espeak-ng (in the image), and is safe to re-run: it replaces the demo
+account's meetings. The demo account has no password and is read-only
+on every route; rate limits (`RATE_LIMIT_*`) and the audio cap
+(`MAX_AUDIO_MINUTES`) are on by default in production. Walkthrough for
+a reviewer: [docs/DEMO_SCRIPT.md](../docs/DEMO_SCRIPT.md).
+
 ### Update and roll back
 
 ```bash
@@ -197,6 +215,10 @@ Keep the backups off the server. Recordings are personal data.
   created with the CLI above.
 - Postgres, backend and ai-service publish no ports. Only Caddy is exposed.
 - `VITE_DEVICE_TOKEN` is no longer used; leave it unset.
+- Rate limits per user (or IP) and a cap on audio length are on by
+  default in production (`RATE_LIMIT_*`, `MAX_AUDIO_MINUTES`).
+- Caddy sets HSTS, nosniff, frame-deny, referrer and permissions headers
+  on every response (`deploy/Caddyfile`).
 - `sudo apt install unattended-upgrades` for OS security patches.
 
 ## Testing the release workflow

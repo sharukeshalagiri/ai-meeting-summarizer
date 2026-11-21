@@ -5,8 +5,11 @@
 #   docker build -t meeting-ai ai-service/
 #
 # - CPU int8 by default (WHISPER_DEVICE=cpu, WHISPER_COMPUTE_TYPE=int8);
-#   no torch, no CUDA. Expected size about 450-600 MB (ctranslate2,
-#   onnxruntime, PyAV with its bundled ffmpeg libraries, numpy).
+#   no torch, no CUDA. Expected size about 500-700 MB (ctranslate2,
+#   onnxruntime, sherpa-onnx, PyAV with its bundled ffmpeg libraries, numpy).
+# - Speaker diarization (POST /diarize, diarization/): the embedding
+#   model (about 26 MB) downloads on first use into
+#   SPEAKER_MODEL_DIR=/models/speaker, on the same volume as Whisper.
 # - No Whisper model is baked in. faster-whisper downloads it from the
 #   Hugging Face hub on the first transcription into HF_HOME=/models,
 #   which docker-compose.prod.yml mounts as a named volume, so the model
@@ -22,8 +25,11 @@ FROM ${PYTHON_IMAGE} AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
-COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+# requirements.txt includes diarization/requirements.txt by relative path,
+# so both keep their layout.
+COPY requirements.txt /tmp/req/requirements.txt
+COPY diarization/requirements.txt /tmp/req/diarization/requirements.txt
+RUN pip install -r /tmp/req/requirements.txt
 
 FROM ${PYTHON_IMAGE} AS runtime
 ENV PATH=/opt/venv/bin:$PATH \
@@ -33,7 +39,8 @@ ENV PATH=/opt/venv/bin:$PATH \
     WHISPER_MODEL=small \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE_TYPE=int8 \
-    HF_HOME=/models
+    HF_HOME=/models \
+    SPEAKER_MODEL_DIR=/models/speaker
 # uid/gid 1000 on purpose: the same as the backend image's `node` user,
 # so whichever container mounts the shared uploads volume first, the
 # ownership Docker copies into the empty volume works for both.
@@ -45,6 +52,7 @@ COPY --from=build /opt/venv /opt/venv
 WORKDIR /app
 COPY --chown=app:app main.py ./
 COPY --chown=app:app asr ./asr
+COPY --chown=app:app diarization ./diarization
 USER app
 EXPOSE 8000
 # /health never loads the model (it loads lazily), so this stays cheap.

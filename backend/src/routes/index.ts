@@ -28,7 +28,7 @@ import w3JobsHealthRoutes from "./w3-jobs-health.routes";
 import { demoSearch } from "../controllers/w5-demo.controller";
 import { demoReadOnly } from "../middleware/demo.middleware";
 import { durationCaps, rateLimit } from "../middleware/rateLimit.middleware";
-import { demoRoutes } from "./w5-demo.routes";
+import { demoRouter } from "./w5-demo.routes";
 
 /**
  * Single place where the API surface is assembled, so the full set of
@@ -55,7 +55,7 @@ router.use("/auth", authRoutes);
 // w3-jobs: health with the queue state, and readiness (503 while it is down).
 router.use("/health", w3JobsHealthRoutes);
 // w5-demo: demo status and the "Try the demo" sign-in (public).
-router.use("/demo", demoRoutes);
+router.use("/demo", demoRouter);
 
 // w5-demo: MAX_AUDIO_MINUTES for live captures.
 router.post("/live/sessions/:id/chunks", durationCaps.live);
