@@ -263,6 +263,23 @@ export const env = {
   retentionCron: optional("RETENTION_CRON", "17 * * * *"),
   /** ffmpeg binary for live assembly (w3-jobs); on PATH by default. */
   ffmpegPath: optional("FFMPEG_PATH", "ffmpeg"),
+
+  /** w5-demo: "Try the demo" signs visitors into the read-only demo account. */
+  demoMode: asBoolean("DEMO_MODE", false),
+  /** w5-demo: a demo sign-in lasts this many hours (sessions are swept after). */
+  demoSessionHours: asNumber("DEMO_SESSION_HOURS", 2),
+  /** w5-demo: per-client rate limits on /api. On by default only in production. */
+  rateLimitEnabled: asBoolean("RATE_LIMIT_ENABLED", isProduction),
+  /** w5-demo: requests per minute per user (or per IP when signed out). */
+  rateLimitPerMinute: asNumber("RATE_LIMIT_PER_MINUTE", 300),
+  /** w5-demo: expensive requests (uploads, processing, chat, sign-ins) per hour. */
+  rateLimitHeavyPerHour: asNumber("RATE_LIMIT_HEAVY_PER_HOUR", 60),
+  /** w5-demo: longest recording or live capture processed, in minutes; 0 = no cap. */
+  maxAudioMinutes: asNumber("MAX_AUDIO_MINUTES", isProduction ? 180 : 0),
+  /** w5-demo: measures an upload's duration for MAX_AUDIO_MINUTES. */
+  ffprobePath: optional("FFPROBE_PATH", "ffprobe"),
+  /** w5-demo, demo:seed only: text-to-speech engine, auto | sapi | espeak | tones. */
+  demoTts: optional("DEMO_TTS", "auto"),
 } as const;
 
 export type Env = typeof env;
