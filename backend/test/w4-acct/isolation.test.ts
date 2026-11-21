@@ -139,6 +139,8 @@ const ROUTES: Record<string, Kind> = {
   "POST /api/auth/password": { kind: "public" },
   "GET /api/health/": { kind: "public" },
   "GET /api/health/ready": { kind: "public" },
+  "GET /api/demo/": { kind: "public" },
+  "POST /api/demo/login": { kind: "public" },
 
   "POST /api/live/sessions": { kind: "scoped", body: { title: "t" }, repos: ["meeting.create"] },
   "POST /api/live/sessions/:id/chunks": { kind: "foreign", path: "/api/live/sessions/B-session/chunks" },
@@ -232,6 +234,7 @@ const mounts = async (): Promise<[string, Router][]> => {
   return [
     ["/api/auth", r(await import("../../src/routes/auth.routes"))],
     ["/api/health", r(await import("../../src/routes/w3-jobs-health.routes"))],
+    ["/api/demo", (await import("../../src/routes/w5-demo.routes")).demoRouter],
     ["/api/live", r(await import("../../src/routes/live.routes"))],
     ["/api/users", r(await import("../../src/routes/user.routes"))],
     ["/api/meetings", r(await import("../../src/routes/meeting.routes"))],

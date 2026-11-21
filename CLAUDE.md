@@ -37,11 +37,17 @@ accounts (w4-acct): email + password sign-in with server-side sessions,
 every query scoped by user, per-user device tokens for recorders,
 settings, audio retention, exports and meeting series. w3-jobs part 2
 then moved the end of the live flow onto jobs: `/end` assembles the
-chunks into one recording and runs the full pipeline on it.
+chunks into one recording and runs the full pipeline on it. Wave 5
+added demo mode and public-instance safety (w5-demo): a read-only demo
+account with three synthetic meetings, rate limits, an audio-length cap,
+generated README screenshots and accuracy table. The integration after
+it wired the demo into the deploy, added proxy security headers, an
+image-build workflow and the tag-driven release workflow.
 
-Not done yet: the accepted eval baseline and the AMI DER run (pending
-(baseline not yet run); `eval/baseline.json` is a placeholder), and the
-Pair 3 wiring requests listed under [Speakers](#speakers-w2-spk).
+Not done yet: the accepted eval baseline and the AMI DER run
+(`eval/baseline.json` is a placeholder, so the README accuracy table
+says "not yet measured"), a deployed public instance, and a
+Content-Security-Policy (see `docs/DECISIONS.md`).
 
 ## Operating mode (every session follows this)
 
@@ -107,8 +113,8 @@ NewMeeting.tsx
         parseSegments drops noSpeechProb > 0.75; segments keep channel + words
         -> storage artifact artifacts/<meetingId>/asr.json (lib/storage)
   job meeting-diarize      DIARIZING
-        diarization.service diarizeSegments (no meeting context: mic lines = ME_DISPLAY_NAME,
-          the rest labelled by Gemini from the text; voice diarization is live-only so far)
+        diarization.service diarizeSegments with the meeting context (the whole file is one
+          chunk at offset 0): DIARIZATION_PROVIDER applies, as for live chunks (see Speakers)
         -> Transcript + TranscriptSegment rows (replaced; channel, words), durationSec
            no segments -> NO_SPEECH, status COMPLETED (stops here)
   job meeting-clean        CLEANING     CLEAN noise labels -> noiseLabel per segment
@@ -242,26 +248,22 @@ no chunk audio could be assembled, it is a 404.
 diarizeSegments(segments, context?)          services/diarization.service.ts
   mic channel -> always the user: SpeakerProfile "mic", shown as Settings display name,
                  else ME_DISPLAY_NAME ("You")
-  with a meeting context (live chunks, final-pass leftovers):
+  with a meeting context (uploads, live chunks, final-pass leftovers):
     DIARIZATION_PROVIDER voice (default): ai-service POST /diarize, sherpa-onnx embeddings,
       clusters per chunk -> services/speakers/matcher.ts matches them to the meeting's
       SpeakerProfile centroids (serialised per meeting, in-process lock)
       unavailable -> text -> continuity -> "Speaker 1" (attribution never fails a chunk)
     text: Gemini from the conversation; deepgram: paid, label-stable only
-  without one (uploads, eval): Gemini text labels, plus the mic rule
+  without one (eval): Gemini text labels, plus the mic rule
 names (services/speakers/names.ts): applied only with two signals, otherwise a suggestion
 GET /api/meetings/:id/speakers ; PATCH /:id/speakers/:key {displayName} ; POST /:id/speakers/:key/accept
   rename -> profile (MANUAL) + segments' speaker + SPEAKER Correction via record()
 TranscriptView: rename chip, suggestion chip, "Hide noise" (folds noiseLabel != substantive)
 ```
 
-Requests from the w2-spk PR (#12) that are **not wired yet**:
-`withSpeakerNames` (on `GET /meetings/:id`) and `withOwnerNames` (on
-`GET /action-items`) exist in `speakers.service.ts` but no controller
-calls them, so a rename does not yet show in summary evidence or task
-owners. Uploads still get text diarization (`meeting-diarize` passes no
-context). `ai-service/pytest.ini` still has `testpaths = tests`, so CI
-does not collect `ai-service/diarization/tests`.
+Renames show everywhere at read time: `withSpeakerNames` runs on the
+meeting, summary, summary-review, resummarize and export reads, and
+`withOwnerNames` on `GET /action-items` (`speakers.service.ts`).
 
 ### Accounts and auth (w4-acct)
 
@@ -278,6 +280,15 @@ routes/index.ts: /auth and /health public; /live device auth; everything else re
 /api/meetings/:id/export?format=json|md|pdf&transcript=1 ; POST /:id/export/email (503 without SMTP_HOST)
 /api/meetings/:id/series (PUT) ; POST /:id/since-last-time/:itemId {apply|dismiss}
 job audio-retention     RETENTION_CRON; deletes recordings only, per each user's setting
+GET /api/demo {enabled, readOnly} ; POST /api/demo/login (DEMO_MODE only, else 404)   public (w5-demo)
+  demo account demo@example.com: no password, session DEMO_SESSION_HOURS;
+  middleware/demo.middleware.ts: every non-GET is 403 for it (deny by default),
+  GET /api/search is a keyword search for it (no Gemini call)
+middleware/rateLimit.middleware.ts (after the session is read): per user, else per IP
+  (last X-Forwarded-For entry only behind a private-address proxy); 429 + Retry-After;
+  heavy POSTs (uploads, processing, chat, sign-ins) share an hourly budget;
+  MAX_AUDIO_MINUTES: ffprobe before transcribe/process/retry, live chunks past the cap 413,
+  single-request POST /:id/upload refused while a cap is set
 ```
 
 The frontend sends the cookie (`withCredentials` in `api.ts` and on the
@@ -324,8 +335,7 @@ is assembled in `backend/src/routes/index.ts`.
   `deepgram`), through `AsrProvider`, which extends
   `TranscriptionProvider` with the previous chunk's words. Diarization:
   `backend/src/services/speakers/providers.ts` (`voice`, `text`,
-  `deepgram`). The header comment of `types/providers.ts` still says
-  nothing is wired; it is out of date.
+  `deepgram`).
 
 The reasons behind these choices (chunked Whisper instead of streaming,
 voice diarization with a text fallback, `float8[]` instead of pgvector,
@@ -356,8 +366,6 @@ web page uses the session cookie).
   tested; Linux and macOS are untested. Durable on-disk queue. Tests:
   `npm run test:desktop`. Details in `desktop-recorder/README.md`.
 
-Both recorder READMEs still describe the old shared `DEVICE_TOKEN`; use
-a per-user token from the Devices page instead (w4-acct).
 
 ## Setup and commands
 
@@ -409,6 +417,11 @@ npm run eval:gen-long         # writes the generated 90-minute case to eval/.gen
 npm run setup:e2e             # once: Playwright + chromium (headless shell)
 npm run test:e2e              # browser e2e with the API mocked in the page
 
+# demo (w5-demo)
+npm --prefix backend run demo:seed    # (re)seed the read-only demo account, no Gemini or Whisper calls
+npm run screenshots                   # README images from the demo seed (needs npm run setup:e2e)
+npm run readme:accuracy [-- --check]  # README accuracy table from the latest eval report
+
 # parallel tracks
 npm run worktree:env <track>  # ports, env files, database, install, migrate for a track worktree
 npm run setup:light           # Node packages only (no Python / torch)
@@ -449,8 +462,12 @@ origin), web (nginx), backend, a one-shot `migrate` service that the
 backend waits for, ai-service and Postgres. Secrets come only from
 `deploy/.env` (copied from `deploy/.env.example`, ignored by git).
 Hosting options, update, rollback and backups are in
-[`deploy/README.md`](deploy/README.md). The images have not been built
-in CI yet, and the release workflow is not merged.
+[`deploy/README.md`](deploy/README.md), including the public demo
+(`DEMO_MODE=true`, then `node dist/demo/seed.js` in the backend
+container). Caddy adds the security headers. `.github/workflows/images.yml`
+builds the three images on PRs that touch them (nothing is pushed), and
+`release.yml` publishes the extension zip and desktop builds when a `v*`
+tag is pushed.
 
 ### Environment variables
 
@@ -498,8 +515,16 @@ fails at boot):
 | `SMTP_PASSWORD` | unset | |
 | `SMTP_FROM` | Meeting Companion <no-reply@localhost> | |
 | `RETENTION_CRON` | 17 * * * * | when the audio-retention job runs (cron, UTC; hourly) |
-| `DIARIZATION_PROVIDER` | voice | `voice` (ai-service speaker embeddings, free; falls back to text when the ai-service has no model), `text` (Gemini infers turns from the conversation) or `deepgram` (paid per audio minute; needs `DEEPGRAM_API_KEY`, else boot fails); anything else fails at boot. Applies to live chunks; uploads always use text labels for now |
-| `ME_DISPLAY_NAME` | You | label for your own (mic channel) lines until renamed. The account's display name from Settings takes precedence (w4-acct); upload text labels still use this value |
+| `DIARIZATION_PROVIDER` | voice | `voice` (ai-service speaker embeddings, free; falls back to text when the ai-service has no model), `text` (Gemini infers turns from the conversation) or `deepgram` (paid per audio minute; needs `DEEPGRAM_API_KEY`, else boot fails); anything else fails at boot. Applies to uploads and live chunks |
+| `ME_DISPLAY_NAME` | You | label for your own (mic channel) lines until renamed, used only without a meeting (eval). The account's display name from Settings takes precedence on every meeting path (w4-acct) |
+| `DEMO_MODE` | false | w5-demo: shows "Try the demo" and enables `POST /api/demo/login` |
+| `DEMO_SESSION_HOURS` | 2 | how long a demo sign-in lasts |
+| `RATE_LIMIT_ENABLED` | true in production | per-client limits on `/api` |
+| `RATE_LIMIT_PER_MINUTE` | 300 | requests per minute per user (or IP when signed out) |
+| `RATE_LIMIT_HEAVY_PER_HOUR` | 60 | uploads, processing, chat and sign-ins per hour |
+| `MAX_AUDIO_MINUTES` | 180 in production, 0 elsewhere | longest recording or live capture processed; 0 = no cap |
+| `FFPROBE_PATH` | ffprobe | measures uploads for `MAX_AUDIO_MINUTES` |
+| `DEMO_TTS` | auto | demo seed only: `auto`, `sapi`, `espeak` or `tones` |
 | `FFMPEG_PATH` | ffmpeg | ffmpeg binary for live assembly (w3-jobs); on PATH by default. Without it the final pass is skipped and the live draft is summarized |
 
 **`ai-service/.env`** (read by `scripts/ai-service.mjs`; shell values take
@@ -686,8 +711,8 @@ non-obvious code. Keep doing that.
   model is loaded lazily (`get_model()`), so `/health` never loads it.
   `ai-service/diarization/tests/` uses a fake engine and a fake
   `sherpa_onnx`, so no model is downloaded; run it with
-  `python -m pytest diarization/tests` (not collected by `pytest.ini`
-  yet, see Speakers).
+  `python -m pytest diarization/tests`; `pytest.ini` collects it, so
+  `npm run test:ai` and CI run it.
 - Live jobs: `backend/test/` covers assembly (scripted, and real ffmpeg
   where it is installed), speaker carry-over, the evidence remap, a
   killed worker, a restart during the late wait and `/end` with the

@@ -40,6 +40,14 @@ x-backend-env: &backend-env
   DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
   UPLOAD_DIR: uploads/meetings
   LIVE_CHUNK_DIR: uploads/live
+  # w5-demo: public-instance safety. Rate limits and the audio cap are on
+  # by default in production; DEMO_MODE shows "Try the demo".
+  DEMO_MODE: ${DEMO_MODE:-false}
+  DEMO_SESSION_HOURS: ${DEMO_SESSION_HOURS:-2}
+  RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+  RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-300}
+  RATE_LIMIT_HEAVY_PER_HOUR: ${RATE_LIMIT_HEAVY_PER_HOUR:-60}
+  MAX_AUDIO_MINUTES: ${MAX_AUDIO_MINUTES:-180}
 
 services:
   caddy:

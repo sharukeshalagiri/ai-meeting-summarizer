@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { AuthProvider } from "../lib/auth/AuthProvider";
 import { useAuth } from "../lib/auth/authContext";
+import { DemoBanner } from "./demo/DemoBanner";
 import { Skeleton } from "./Skeleton";
 import "./account/account.css";
 
@@ -112,6 +113,8 @@ function Shell() {
           </div>
         </div>
       </header>
+
+      <DemoBanner email={account?.email} />
 
       <main id="main">
         <Outlet />

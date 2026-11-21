@@ -35,9 +35,11 @@ RUN npm run build \
 FROM ${NODE_IMAGE} AS runtime
 # ffmpeg: live assembly joins a session's chunks into one recording
 # (src/jobs/assemble.ts, FFMPEG_PATH). Without it the final pass falls
-# back to summarizing the live draft.
+# back to summarizing the live draft. ffprobe (same package) measures
+# uploads for MAX_AUDIO_MINUTES. espeak-ng: the demo seed
+# (dist/demo/seed.js) speaks the synthetic meetings instead of tones.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl tini ffmpeg \
+ && apt-get install -y --no-install-recommends openssl tini ffmpeg espeak-ng \
  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
     PORT=5000 \

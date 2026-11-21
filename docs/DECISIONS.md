@@ -1024,9 +1024,10 @@ transcript") one provider of three, and the fallback.
   `applySpeakerNames` (pure) projects current names at read time:
   evidence takes the segment's current speaker by idx, and `speaker`,
   `owner` and `assignedBy` strings equal to an old name are replaced;
-  free text (TL;DR) is left alone. **Not wired yet:** no controller calls
-  `withSpeakerNames` or `withOwnerNames` (w2-spk requests 1 and 2), so
-  until then a rename shows in the transcript only.
+  free text (TL;DR) is left alone. `withSpeakerNames` and
+  `withOwnerNames` run on every read that returns summary evidence or
+  task owners (meeting, summary, action items, exports), so a rename
+  shows everywhere at once (wired in #32).
 
 ## Hide noise folds lines, it never removes them (w2-spk)
 
@@ -1040,3 +1041,180 @@ transcript") one provider of three, and the fallback.
   highlights it. Evidence and citations that point at a folded line
   still land. CLEAN never deletes text either, so a wrong label costs a
   click, not a line.
+
+## The demo account: a fixed address, no schema change (w5-demo)
+
+- The demo account is the user `demo@example.com` (`src/demo/types.ts`).
+  example.com is reserved, so no real person can own it. Recognising it
+  by email needs no new column (no `schema/` branch) and works for the
+  read-only check, which only has `req.user` (`{ id, name, email }`).
+- It never has a password: the seed clears `passwordHash`, so the
+  normal sign-in can't reach it. The only way in is
+  `POST /api/demo/login`, which exists only with `DEMO_MODE=true` (off
+  by default; 404 otherwise) and answers 503 with a hint when the demo
+  was never seeded.
+- passport regenerates the session on the demo sign-in (no fixation).
+  The session lasts `DEMO_SESSION_HOURS` (default 2) instead of 30 days.
+  The controller saves the session a second time so the store keeps the
+  short `originalMaxAge`; without that the rolling cookie would grow
+  back to 30 days on the next request (tested).
+
+## Read-only is one deny-by-default middleware (w5-demo)
+
+- `middleware/demo.middleware.ts` runs right after the session is read,
+  before every router. For the demo account, every method except GET,
+  HEAD and OPTIONS is a 403 with one message, apart from
+  `POST /auth/logout` and `POST /auth/login`. Paths are compared lower
+  case without a trailing slash (Express matches them that way), and a
+  mismatch can only refuse, never allow.
+- Rejected alternative: a list of forbidden routes. A route added later
+  by any track would be writable by the demo until someone remembered
+  the list. Deny by default covers uploads, deletes, renames, settings,
+  device tokens, email exports, re-summarize, chat and live capture,
+  and anything added later.
+- The one GET that calls Gemini is `GET /search` (it embeds the
+  query). For the demo account it is answered by a keyword search over
+  its own segments (`services/w5-demo.service.ts`), mounted before the
+  real handler; everyone else falls through. Same result shape, so the
+  Ask page works. The demo has no embeddings, because making them would
+  call Gemini.
+- `test/w5-demo/readOnly.test.ts` lists every registered route (same
+  method as w4-acct's isolation test) and sends every non-GET one as
+  the demo account: all are 403 and no repository, embedding or Gemini
+  call runs. A new mutating route anywhere is covered automatically.
+
+## Seed data: hand-written v2 summaries over the synthetic fixtures (w5-demo)
+
+- The three meetings (lecture, interview, project) use the transcripts
+  of `fixtures/transcripts/` (a test checks them line for line), so the
+  demo shows the same material the accuracy harness measures. The
+  summaries are written by hand in `src/demo/content/*.ts`, in the
+  pipeline's schemaVersion 2 shape, with mode sections, and respect the
+  fixtures' answer keys: every must-appear item is there and cites an
+  accepted segment, no must-not-appear trap is (tested).
+- Evidence is written as segment idx numbers. `src/demo/build.ts` turns
+  each into `{ idx, speaker, startMs }` from the real segment, the way
+  VERIFY does, and throws on an idx that does not exist, so a chip can
+  never point nowhere. Spoken dates are resolved by `lib/dates` against
+  the meeting start, like the pipeline.
+- Speakers follow w2-spk: the recording user is the `mic` profile and
+  channel, others are `Speaker N` profiles with display names. Noise
+  labels mark the small talk, asides and logistics, so the transcript's
+  "Hide noise" works.
+- The builder is pure (no env, Prisma or network): the seed, the tests
+  and the screenshot runner share it.
+
+## Audio: generated at seed time, never committed (w5-demo)
+
+- `.gitignore` excludes every audio format and CLAUDE.md forbids
+  committing audio, so `demo:seed` generates the recordings:
+  - Windows: SAPI through one PowerShell process (built in, offline).
+  - Linux/macOS: `espeak-ng` or `espeak` if installed.
+  - Otherwise: a soft tone per speaker, as long as the line would take
+    to say. Playable and deterministic, clearly not speech.
+- Each line is spoken separately and the clips are laid end to end in
+  the capture contract's stereo layout (left = mic, right = others). The
+  segment times come from the clip lengths, so every chip seeks to where
+  its line is actually spoken.
+- ffmpeg compresses the WAV to Ogg Opus at 40 kb/s when available
+  (about 0.6 MB for 2.5 minutes); otherwise the WAV is kept.
+- Files go to `STORAGE_DIR/demo/<key>.ogg`, through `lib/storage`.
+  Measured: the interview takes about 9 s to generate with SAPI.
+
+## Public-instance limits (w5-demo)
+
+- **Rate limits** (`middleware/rateLimit.middleware.ts`): in memory,
+  fixed window, per user when signed in, else per client IP.
+  - General: `RATE_LIMIT_PER_MINUTE` (300).
+  - Heavy (uploads, processing, re-summarize, index, chat, email
+    export, live session start, sign-in, sign-up, demo sign-in), on top
+    of the general one: `RATE_LIMIT_HEAVY_PER_HOUR` (60).
+  - `RATE_LIMIT_ENABLED` defaults to production only, so the existing
+    route tests and local use are unaffected.
+  - No dependency (express-rate-limit would add one to a package this
+    track does not own). One backend process, so memory is enough; a
+    restart only forgets counters.
+  - Client IP: the app keeps `trust proxy` off. When the socket peer is
+    a private or loopback address (Caddy on the compose network), the
+    last `X-Forwarded-For` entry, the one Caddy appended, is the client.
+    A direct internet peer is never private, so it cannot choose its
+    key with a forged header.
+- **Size and duration caps:** size stays `MAX_UPLOAD_MB` (multer).
+  `MAX_AUDIO_MINUTES` (default 180 in production, 0 = off elsewhere):
+  - `/transcribe`, `/process` and `/retry` measure the stored recording
+    with ffprobe before work starts, and answer 413 when it is longer.
+    If ffprobe fails, the request goes on and the failure is logged
+    (fail open): the transcription timeout still bounds it, and a
+    missing binary should not take processing down.
+  - Live chunks are refused (413) once the session's `elapsedMs` reached
+    the cap. That check runs before device auth (it is mounted ahead of
+    the live router), so it can tell an unauthenticated caller that an
+    unguessable session id exists and is long; nothing else.
+  - `POST /:id/upload` stores and transcribes in one request, so there
+    is no moment to measure the file. While a cap is set it answers 400
+    and points to `/audio` + `/process` (what the web app uses). See the
+    request below to lift this.
+- **Retention:** the demo account's own audio is `KEEP` (the seed sets
+  it), demo sessions expire after `DEMO_SESSION_HOURS` and the session
+  store sweeps them, sign-up is off in production (w4-acct), and the
+  w4-acct retention job applies to real accounts. Re-running `demo:seed`
+  resets the demo account completely.
+
+## Screenshots: the real frontend, the API mocked from the seed builder (w5-demo)
+
+- `npm run screenshots` runs `e2e/screenshots/` (Playwright, one
+  headless chromium, one Vite dev server) with the API answered in the
+  browser from `buildDemoMeetings()` and tone audio. It writes
+  `docs/images/*.png` (25–80 KB each, 1280×800, scale 1).
+- A real local stack would need Docker, Postgres, the backend and the
+  seed: about 2 GB more on a laptop with about 1 GB free. The mock
+  serves the same data the seed writes, so the pictures match.
+- Each step asserts what it photographs (the TL;DR, the exam section,
+  the highlighted cited line), so a broken page fails instead of being
+  photographed.
+
+## README accuracy table: generated, with its source named (w5-demo)
+
+- `scripts/readme-accuracy.mjs` rewrites the block between
+  `<!-- accuracy:start -->` and `<!-- accuracy:end -->` from the newest
+  `eval/reports/*.json` (by name: date, then run number; mtimes are not
+  reliable after a checkout). With no report it says "Not yet measured"
+  and prints no number (tested).
+- The block names its source (`<!-- source: ... -->`). The test checks
+  that the committed block is exactly the generator's output for that
+  source, so a hand edit fails CI. It does not require the newest
+  report: otherwise w5-acc committing a report would turn every PR red
+  until someone regenerated the README (which only w5-demo owns).
+  `--check` prints a note when a newer report exists.
+- The metric labels are copied from `eval/src/report.ts`; a test parses
+  that file and fails if they drift.
+
+## Security headers at the proxy, no CSP yet (integration)
+
+- **Decision.** Caddy sets HSTS, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, a referrer policy and a permissions policy
+  (`microphone=(self)` for the web Live page) on every response, and
+  drops the `Server` header. The deploy is one origin, so one place
+  covers both the SPA and the API.
+- **Rejected: helmet in Express.** It would cover only `/api`; the SPA
+  is served by nginx. Doing it at the proxy keeps one list.
+- **No Content-Security-Policy yet.** A wrong CSP breaks the app
+  silently (audio from blob URLs, SSE, the extension's calls), and it
+  needs a real browser pass on the deployed site first. Next step: ship
+  it as `Content-Security-Policy-Report-Only`, watch the console, then
+  enforce.
+
+## Images are built in CI; releases come from tags (integration)
+
+- **Decision.** `images.yml` builds the three production images on any
+  PR that touches what goes into them, validates the compose file and
+  the Caddyfile, and checks the backend image has ffmpeg, ffprobe,
+  espeak-ng, the demo seed and the account CLI. Nothing is pushed: the
+  deploy builds on the host (deploy/README.md), so there is no registry
+  to secure or pay for.
+- **Release.** `release.yml` runs on a `v*` tag: the extension zip
+  (manifest version must match the tag, generated capture code must be
+  current) and PyInstaller builds of the desktop recorder for Windows,
+  macOS and Linux, published as one GitHub Release. Windows must build;
+  macOS and Linux are untested, so their failure only adds a line to the
+  release notes.

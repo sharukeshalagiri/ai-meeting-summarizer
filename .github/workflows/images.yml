@@ -1,0 +1,63 @@
+name: Images
+
+# Builds the three production images (docker-compose.prod.yml) so a broken
+# Dockerfile, lockfile or system package fails a PR instead of a deploy.
+# Nothing is pushed anywhere. Runs only when something that goes into an
+# image changes.
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "ai-service/**"
+      - "docker-compose.prod.yml"
+      - "deploy/**"
+      - ".github/workflows/images.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "ai-service/**"
+      - "docker-compose.prod.yml"
+      - "deploy/**"
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, web, ai-service]
+    env:
+      # Placeholders: `config` and `build` need the required values set.
+      POSTGRES_PASSWORD: ci
+      GEMINI_API_KEY: ci
+      SESSION_SECRET: ci-placeholder-not-a-secret-000000000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose file is valid
+        run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Build
+        run: docker compose -f docker-compose.prod.yml build ${{ matrix.service }}
+      - name: Caddyfile is valid
+        if: matrix.service == 'web'
+        run: |
+          docker run --rm -e DOMAIN=localhost \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.8-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Backend image starts its tools
+        if: matrix.service == 'backend'
+        run: |
+          img=ai-meeting-summarizer/backend:latest
+          docker run --rm --entrypoint sh "$img" -c \
+            'ffmpeg -version >/dev/null && ffprobe -version >/dev/null && espeak-ng --version && test -f dist/demo/seed.js && test -f dist/lib/auth/cli.js'

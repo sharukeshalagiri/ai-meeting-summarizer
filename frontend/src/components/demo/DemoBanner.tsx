@@ -4,9 +4,7 @@ import "./demo.css";
 /**
  * A strip under the header while signed in to the demo account, so a
  * refused edit is not a surprise. The server enforces read-only either
- * way; this is only the explanation. Meant for Layout (w4-acct's file),
- * which renders it once the integrator adds it:
- * `<DemoBanner email={account.email} />`.
+ * way; this is only the explanation. Rendered by Layout under the header.
  */
 export function DemoBanner({ email }: { email: string | null | undefined }) {
   if (email?.toLowerCase() !== DEMO_EMAIL) return null;
