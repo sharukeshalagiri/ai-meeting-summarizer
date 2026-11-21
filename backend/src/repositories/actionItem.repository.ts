@@ -154,7 +154,7 @@ export const deleteById = (id: string) =>
 /**
  * Replaces one row's evidence (segment references by idx) and nothing
  * else. The live final pass renumbers a meeting's segments and re-points
- * the evidence of the items that survive it (w3-jobs).
+ * the evidence of the items that survive it.
  */
 export const updateEvidence = (id: string, evidence: Prisma.InputJsonValue) =>
   prisma.actionItem.update({

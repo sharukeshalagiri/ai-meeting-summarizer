@@ -5,7 +5,7 @@ import * as exportRepo from "../../repositories/export.repository";
 import * as segmentRepo from "../../repositories/segment.repository";
 import { BadRequest, NotFound, UpstreamError } from "../../types/errors";
 import { withSpeakerNames } from "../speakers/speakers.service";
-import { reviewedActionItems } from "../w1-sum.service";
+import { reviewedActionItems } from "../summaryPipeline.service";
 import { buildExport, type ExportDocument } from "./exportModel";
 import { getTransport } from "./mailer";
 import { fileNameFor, toMarkdown, toPdf } from "./render";

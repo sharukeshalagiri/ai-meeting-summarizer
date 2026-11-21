@@ -4,7 +4,7 @@ import type { HypSegment } from "./audio";
 /**
  * The one place the evaluation touches diarization: the exported
  * `diarizeSegments`. Main's version infers speakers from text with
- * Gemini (metered and capped like every other call); w2-spk keeps the
+ * Gemini (metered and capped like every other call); speaker attribution keeps the
  * export compatible, so its version is picked up here after it merges
  * with no change to the harness.
  */

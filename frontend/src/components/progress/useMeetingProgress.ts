@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getData } from "../../api/api";
-import { meetingEventsUrl } from "../../api/w3-jobs";
-import type { MeetingProgress } from "../../types/w3-jobs";
+import { meetingEventsUrl } from "../../api/processing";
+import type { MeetingProgress } from "../../types/processing";
 import { isSettled } from "./stages";
 
 /** Polling interval when Server-Sent Events are not available. */
@@ -76,7 +76,7 @@ export function useMeetingProgress(
     if (typeof EventSource === "undefined") {
       poll();
     } else {
-      // w4-acct: the stream is authenticated by the session cookie.
+      // The stream is authenticated by the session cookie.
       source = new EventSource(meetingEventsUrl(meetingId), { withCredentials: true });
 
       source.addEventListener("progress", (event) => {

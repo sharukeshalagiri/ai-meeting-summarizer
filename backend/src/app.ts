@@ -16,7 +16,7 @@ import { sendSuccess } from "./types/api";
 export const createApp = () => {
   const app = express();
 
-  // w4-acct: credentials so the session cookie crosses from the dev
+  // Credentials so the session cookie crosses from the dev
   // frontend's port. A credentialed response may not say "*", so "*"
   // reflects the caller's origin (development; the cookie is
   // SameSite=Lax, so other sites still cannot use it) and anything else

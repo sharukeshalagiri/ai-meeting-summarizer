@@ -14,7 +14,7 @@ export const getActionItems = asyncHandler(
       optionalString(req.query.status)
     );
 
-    // Owners show the speakers' current names (read-time, w2-spk D5).
+    // Owners show the speakers' current names (read-time).
     return sendSuccess(res, await withOwnerNames(items), "Action items fetched");
   }
 );

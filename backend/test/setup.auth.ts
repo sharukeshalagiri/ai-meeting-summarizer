@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 /**
- * Global test setup for accounts (w4-acct), registered in
+ * Global test setup for accounts, registered in
  * vitest.config.mts.
  *
  * Route tests written before accounts mock the repositories they need
@@ -12,7 +12,7 @@ import { vi } from "vitest";
  * - every ownership lookup answers TEST_USER, so their rows are "mine";
  * - account settings resolve to the server defaults.
  *
- * Suites that test accounts themselves (test/w4-acct/) override these
+ * Suites that test accounts themselves (test/accounts/) override these
  * mocks per test (vi.mocked(...).mockImplementation) or import the real
  * modules with vi.importActual.
  */

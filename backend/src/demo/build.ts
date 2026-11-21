@@ -139,7 +139,7 @@ export const buildDemoMeeting = (spec: DemoMeetingSpec, options: BuildOptions): 
     mode: spec.mode,
     modeSetting: spec.mode,
     detectedMode: null,
-    prompts: { demo: "w5-demo: hand-written synthetic summary, no model call" },
+    prompts: { demo: "demo: hand-written synthetic summary, no model call" },
     stats: {
       segments: segments.length,
       substantiveSegments: segments.filter((s) => s.noiseLabel === "substantive").length,

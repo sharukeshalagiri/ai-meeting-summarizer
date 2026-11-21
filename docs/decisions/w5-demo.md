@@ -34,11 +34,11 @@ For the integrator to fold into `docs/DECISIONS.md` and `CLAUDE.md`.
   and anything added later.
 - The one GET that calls Gemini is `GET /search` (it embeds the
   query). For the demo account it is answered by a keyword search over
-  its own segments (`services/w5-demo.service.ts`), mounted before the
+  its own segments (`services/demo.service.ts`), mounted before the
   real handler; everyone else falls through. Same result shape, so the
   Ask page works. The demo has no embeddings, because making them would
   call Gemini.
-- `test/w5-demo/readOnly.test.ts` lists every registered route (same
+- `test/demo/readOnly.test.ts` lists every registered route (same
   method as w4-acct's isolation test) and sends every non-GET one as
   the demo account: all are 403 and no repository, embedding or Gemini
   call runs. A new mutating route anywhere is covered automatically.
@@ -167,12 +167,12 @@ For the integrator to fold into `docs/DECISIONS.md` and `CLAUDE.md`.
    `<DemoBanner email={account.email} />` (from
    `components/demo/DemoBanner.tsx`) under the header, so demo visitors
    see "read-only" before an edit is refused.
-3. **`backend/test/w4-acct/isolation.test.ts`:** classify
+3. **`backend/test/accounts/isolation.test.ts`:** classify
    `GET /api/demo/` and `POST /api/demo/login` as `public`, add
    `["/api/demo", demoRouter]` to `mounts()`, and then mount `demoRouter`
-   directly in `routes/index.ts`. Until then `routes/w5-demo.routes.ts`
+   directly in `routes/index.ts`. Until then `routes/demo.routes.ts`
    exports a function wrapping the router, so that test's sub-router
-   count is unchanged; `test/w5-demo/` covers both routes.
+   count is unchanged; `test/demo/` covers both routes.
 4. **`backend/src/services/meeting.service.ts` `processMeeting`:** call a
    duration check on the stored file (export it from
    `middleware/rateLimit.middleware.ts` as a service helper) so

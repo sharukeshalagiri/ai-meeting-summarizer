@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { getErrorMessage } from "../../api/api";
-import { downloadExport, emailExport, exportMarkdown } from "../../api/w4-acct";
+import { downloadExport, emailExport, exportMarkdown } from "../../api/account";
 import { useAuth } from "../../lib/auth/authContext";
 
 /**

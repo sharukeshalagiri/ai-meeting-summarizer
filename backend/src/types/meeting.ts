@@ -21,7 +21,7 @@ export type MeetingStatusValue =
 /**
  * Meeting.processingStage values (a plain String column, like status).
  *
- * The job pipeline (backend/src/jobs, w3-jobs) moves a meeting through
+ * The job pipeline (backend/src/jobs) moves a meeting through
  * them in order: ASSEMBLING (live meetings only: chunks -> one
  * recording), TRANSCRIBING, DIARIZING, CLEANING, SUMMARIZING, then DONE.
  * A stage is written when its job is queued, so it means "waiting for or

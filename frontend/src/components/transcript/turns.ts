@@ -1,4 +1,4 @@
-import type { SpeakerSegment } from "../../types/w2-spk";
+import type { SpeakerSegment } from "../../types/speakers";
 
 /**
  * Pure transcript shaping for TranscriptView (no React, unit-tested).

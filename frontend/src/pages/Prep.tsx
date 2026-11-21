@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getErrorMessage } from "../api/api";
-import { createSeries } from "../api/w4-acct";
+import { createSeries } from "../api/account";
 import EmptyState from "../components/EmptyState";
 import ErrorState from "../components/ErrorState";
 import { Skeleton } from "../components/Skeleton";
 import SinceLastTimeList from "../components/series/SinceLastTimeList";
 import { useFetch } from "../hooks/useFetch";
-import type { Prep as PrepData, SeriesSummary } from "../types/w4-acct";
+import type { Prep as PrepData, SeriesSummary } from "../types/account";
 import { formatDate } from "../utils/format";
 import "../components/account/account.css";
 

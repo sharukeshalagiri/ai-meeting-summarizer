@@ -51,7 +51,7 @@ import {
   parseClassification,
   parseNoiseLabels,
   parseSummaryBody,
-} from "./w1-sum.parsers";
+} from "./summaryPipeline.parsers";
 
 const log = logger.child({ module: "summary.service" });
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { DetectedMode, ModeSetting, SummaryMode } from "../../types/w1-sum";
+import type { DetectedMode, ModeSetting, SummaryMode } from "../../types/summaryPipeline";
 import { MODE_LABELS } from "./summaryData";
 
 const OPTIONS: ModeSetting[] = [

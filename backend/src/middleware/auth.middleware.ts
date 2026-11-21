@@ -27,8 +27,8 @@ export const currentUserId = (req: Request): string => currentUser(req).id;
 
 /**
  * Mounted on /meetings/:id in routes/index.ts, in front of every router
- * that serves a meeting's sub-resources (meeting, w1-sum, w2-spk,
- * w3-jobs, exports, series), so a meeting of another account is a 404
+ * that serves a meeting's sub-resources (meeting, summary, speakers,
+ * processing, exports, series), so a meeting of another account is a 404
  * before any of their controllers run.
  */
 export const requireMeetingAccess = (req: Request, _res: Response, next: NextFunction) => {

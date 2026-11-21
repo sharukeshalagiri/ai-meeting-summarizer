@@ -1,5 +1,5 @@
 """
-Voice-based speaker diarization for the remote channel (w2-spk).
+Voice-based speaker diarization for the remote channel.
 
 Segments come from the ASR pass; this package embeds each one with a
 speaker-embedding model, clusters the embeddings within the request,

@@ -89,6 +89,17 @@ The harness ([eval/README.md](eval/README.md)) scores summaries against hand-wri
 4. **Durable jobs in the Postgres we already run.** pg-boss gives retries, expiry and one run per meeting without Redis or another container, and a restart no longer loses a summary.
 5. **Measured, not eyeballed.** Answer keys with must-appear and must-not-appear items, a Gemini request budget per run, and a baseline that `npm run eval:check` compares every run against. The README's numbers come from that report or say "not yet measured".
 
+## How this was built
+
+I built this with AI coding agents (Claude Code), and the repo shows it: commits carry a co-author line, and [CLAUDE.md](CLAUDE.md) is the operating manual the agents follow. My role was the engineer's: I chose the architecture and the contracts every part builds on (the [capture contract](docs/CAPTURE_CONTRACT.md), the [reserved schema](docs/SCHEMA_NOTES.md), segment `idx` references), approved each plan before code was written, and reviewed and merged every PR. Agents worked in parallel git worktrees, each limited to the paths it owned, with CI failing any PR that strayed ([process docs](docs/process/)).
+
+What that taught me, and what I changed because of it:
+
+- **Agents optimise for their own slice; integration is the human's job.** The production ai-service image was written before speaker attribution existed, and nothing built it, so it broke without anyone noticing. I added a CI job that builds every production image and starts the ai-service before a PR can merge.
+- **Docs drift faster than code.** "Not wired yet" notes outlived the PRs that wired them. The integration step now re-checks the docs against the code.
+- **Process names leaked into the product.** Files were named after work tracks (`w1-sum.service.ts`) instead of what they do. They are named by domain now.
+- **Every decision is written down with the options it beat** in [docs/DECISIONS.md](docs/DECISIONS.md), so I can defend any of them without the agent that typed it.
+
 ## Known limitations
 
 - **No auto-joining meeting bot.** Joining a call as a bot means automating a signed-in headless Chrome per meeting: brittle UI automation, a guest the host has to admit, and roughly a gigabyte of RAM per call. The recorders capture the call you are already in instead, so nothing joins the meeting.

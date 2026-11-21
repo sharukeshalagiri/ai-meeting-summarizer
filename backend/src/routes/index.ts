@@ -21,20 +21,20 @@ import meetingExtrasRoutes from "./meetingExtras.routes";
 import meetingRoutes from "./meeting.routes";
 import transcriptRoutes from "./transcript.routes";
 import userRoutes from "./user.routes";
-import w1SumRoutes from "./w1-sum.routes";
-import w2SpkRoutes from "./w2-spk.routes";
-import w3JobsRoutes from "./w3-jobs.routes";
-import w3JobsHealthRoutes from "./w3-jobs-health.routes";
-import { demoSearch } from "../controllers/w5-demo.controller";
+import w1SumRoutes from "./summaryPipeline.routes";
+import w2SpkRoutes from "./speakers.routes";
+import w3JobsRoutes from "./processing.routes";
+import w3JobsHealthRoutes from "./health.routes";
+import { demoSearch } from "../controllers/demo.controller";
 import { demoReadOnly } from "../middleware/demo.middleware";
 import { durationCaps, rateLimit } from "../middleware/rateLimit.middleware";
-import { demoRouter } from "./w5-demo.routes";
+import { demoRouter } from "./demo.routes";
 
 /**
  * Single place where the API surface is assembled, so the full set of
  * routes can be seen at a glance.
  *
- * Auth (w4-acct), in this order:
+ * Auth, in this order:
  * 1. Sessions (cookie) are read for every request.
  * 2. Public: /auth (sign in, sign up, me) and /health.
  * 3. /live: device auth (a per-user Bearer token, or the session).
@@ -46,24 +46,24 @@ import { demoRouter } from "./w5-demo.routes";
 const router = Router();
 
 router.use(authMiddleware());
-// w5-demo: rate limits (per user, else per IP), then the demo account is
+// Rate limits (per user, else per IP), then the demo account is
 // read-only on every route below (middleware/demo.middleware.ts).
 router.use(rateLimit);
 router.use(demoReadOnly);
 
 router.use("/auth", authRoutes);
-// w3-jobs: health with the queue state, and readiness (503 while it is down).
+// Health with the queue state, and readiness (503 while it is down).
 router.use("/health", w3JobsHealthRoutes);
-// w5-demo: demo status and the "Try the demo" sign-in (public).
+// Demo status and the "Try the demo" sign-in (public).
 router.use("/demo", demoRouter);
 
-// w5-demo: MAX_AUDIO_MINUTES for live captures.
+// MAX_AUDIO_MINUTES for live captures.
 router.post("/live/sessions/:id/chunks", durationCaps.live);
 router.use("/live", liveRoutes);
 
 router.use(requireUser);
 router.use("/meetings/:id", requireMeetingAccess);
-// w5-demo: MAX_AUDIO_MINUTES, checked before work starts on a recording.
+// MAX_AUDIO_MINUTES, checked before work starts on a recording.
 router.post("/meetings/:id/transcribe", durationCaps.recording);
 router.post("/meetings/:id/process", durationCaps.recording);
 router.post("/meetings/:id/retry", durationCaps.recording);
@@ -78,22 +78,22 @@ router.get("/analytics", getOverview);
 router.get("/action-items", getActionItems);
 router.patch("/action-items/:id", updateActionItemStatus);
 
-// w5-demo: the demo account gets a keyword search (no Gemini call).
+// The demo account gets a keyword search (no Gemini call).
 router.get("/search", demoSearch);
 router.get("/search", searchSegments);
 router.post("/chat", askQuestion);
 router.get("/chat/:id", getConversation);
 
-// w1-sum: mode, re-summarize and action item review under /meetings.
+// Mode, re-summarize and action item review under /meetings.
 router.use("/meetings", w1SumRoutes);
 
-// w2-spk: speakers (list, rename, accept a name suggestion) under /meetings.
+// Speakers (list, rename, accept a name suggestion) under /meetings.
 router.use("/meetings", w2SpkRoutes);
 
-// w3-jobs: process, retry and the progress stream under /meetings.
+// Process, retry and the progress stream under /meetings.
 router.use("/meetings", w3JobsRoutes);
 
-// w4-acct: settings, devices, series + prep, and per-meeting exports.
+// Settings, devices, series + prep, and per-meeting exports.
 router.use("/account", accountRoutes);
 router.use("/devices", deviceRoutes);
 router.use("/series", seriesRoutes);

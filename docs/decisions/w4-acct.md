@@ -98,7 +98,7 @@ For the integrator to fold into `docs/DECISIONS.md` and `CLAUDE.md`.
    else's thread), transcripts, series, device revoke, and "Since last
    time" applying a change to an earlier meeting's task.
 - All ownership lookups are in `repositories/access.repository.ts`.
-- **Tests:** `test/w4-acct/isolation.test.ts` lists every registered
+- **Tests:** `test/accounts/isolation.test.ts` lists every registered
   route and fails if a route or router is not classified.
   - Every id route, called by Alice with Bob's id, is a 404.
   - Every list or create route reaches its repositories with Alice's id
@@ -137,7 +137,7 @@ For the integrator to fold into `docs/DECISIONS.md` and `CLAUDE.md`.
 - **Recorders are unchanged:** both already send
   `Authorization: Bearer <their setting>`, so the user pastes the new
   token into the same field.
-- `test/w4-acct/devices.test.ts` replays both recorders' exact multipart
+- `test/accounts/devices.test.ts` replays both recorders' exact multipart
   uploads. After revoke, chunk, start, roster and end are all 401, and
   nothing is stored. One account's token cannot upload into another's
   session (404).

@@ -18,7 +18,7 @@ import { linkSegmentSpeakers } from "../services/speakers/attribute";
 import { indexMeeting } from "../services/embedding.service";
 import { transcribeAudioDetailed, type TranscribeOptions } from "../services/speech.service";
 import { cleanSegments, generateSummary } from "../services/summary.service";
-import { resummarize } from "../services/w1-sum.service";
+import { resummarize } from "../services/summaryPipeline.service";
 import { isLiveFinal, Queues, type PipelineJob } from "./definitions";
 import { carrySpeakers, remapEvidence } from "./liveFinal";
 import { classifyError, formatFailure, PROCESSING_NOTES, SUMMARY_FAILED } from "./errors";
@@ -424,7 +424,7 @@ const legacySummary = async (meetingId: string) => {
 };
 
 /**
- * SUMMARIZING: the w1-sum v2 pipeline (which keeps human-reviewed action
+ * SUMMARIZING: the v2 summary pipeline (which keeps human-reviewed action
  * items), falling back to the legacy summary when v2 throws. A user's
  * re-summarize has no fallback: they asked for the v2 summary in a mode.
  */

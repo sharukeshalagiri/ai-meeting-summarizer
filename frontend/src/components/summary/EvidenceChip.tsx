@@ -1,5 +1,5 @@
 import { useAudioPlayer } from "../../lib/audio/useAudioPlayer";
-import type { Evidence, Sourced } from "../../types/w1-sum";
+import type { Evidence, Sourced } from "../../types/summaryPipeline";
 import { formatOffset } from "./summaryData";
 
 /**

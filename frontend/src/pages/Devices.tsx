@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { API_BASE_URL, getErrorMessage } from "../api/api";
-import { createDevice, revokeDevice } from "../api/w4-acct";
+import { createDevice, revokeDevice } from "../api/account";
 import ErrorState from "../components/ErrorState";
 import { Skeleton } from "../components/Skeleton";
 import { useFetch } from "../hooks/useFetch";
-import type { Device, DeviceKind } from "../types/w4-acct";
+import type { Device, DeviceKind } from "../types/account";
 import { formatDate } from "../utils/format";
 
 const KIND_LABELS: Record<DeviceKind, string> = {

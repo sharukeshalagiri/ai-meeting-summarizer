@@ -399,7 +399,7 @@ npm --prefix backend run user:password -- --list                    # users, mee
 npm run typecheck             # backend tsc (src + test) and frontend tsc -b
 npm run lint                  # frontend eslint
 npm test                      # backend vitest + ai-service pytest + scripts (node --test) + frontend vitest
-npm run check:ownership       # changed files vs docs/OWNERSHIP.md (track branches)
+npm run check:ownership       # changed files vs docs/process/OWNERSHIP.md (track branches)
 npm run check                 # all of the above + frontend build
 npm run test:desktop          # desktop-recorder pytest (not part of npm test)
 
@@ -553,8 +553,8 @@ cookie.
 Several Claude Code sessions run at the same time, each in its own
 worktree (`claude --worktree <track>` → `.claude/worktrees/<track>`,
 branch `worktree-<track>`), and each ends in one PR. **Every track follows
-[`docs/PARALLEL.md`](docs/PARALLEL.md)** (rules and the finish protocol)
-and may only change what [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) gives
+[`docs/process/PARALLEL.md`](docs/process/PARALLEL.md)** (rules and the finish protocol)
+and may only change what [`docs/process/OWNERSHIP.md`](docs/process/OWNERSHIP.md) gives
 it.
 
 - **Start with `npm run worktree:env <track>`.** The track's slot in
@@ -692,15 +692,15 @@ non-obvious code. Keep doing that.
   lookup (`access.repository`) answer that user and resolves account
   settings to the server defaults. The only seam is
   `lib/auth/currentUser.ts` `resolveUser`; production code has no test
-  bypass. Suites in `test/w4-acct/` override these mocks per test, or
+  bypass. Suites in `test/accounts/` override these mocks per test, or
   use the real modules (`auth.test.ts` drives the real cookie flow).
-- **Isolation test:** `test/w4-acct/isolation.test.ts` lists every
+- **Isolation test:** `test/accounts/isolation.test.ts` lists every
   registered route and fails if one is not classified. A new route must
   be added there: another account's id is a 404, lists see only the
   caller's id, and no session is a 401.
   Unit tests must not hit the network or the database. Jobs always use
   the in-process memory driver under `NODE_ENV=test`, so job routes need
-  no setup (see `test/w3-jobs/`). Export pure
+  no setup (see `test/jobs/`). Export pure
   helpers (like `parseSegments`) so they can be tested without either.
 - Route-level tests use supertest on `createApp()`, with repositories and
   upstream services replaced by `vi.mock`. See `test/captureContract.test.ts`

@@ -71,7 +71,7 @@ const labelByText = async (
 /**
  * Assigns a speaker to every segment, in order, same length.
  *
- * `context` is optional so context-free callers (w2-eval's DER run)
+ * `context` is optional so context-free callers (the eval harness's DER run)
  * keep `diarizeSegments(segments)`. With it, segments also carry the
  * resolved `speakerId`; store it with `linkSegmentSpeakers` once the
  * segments are written.

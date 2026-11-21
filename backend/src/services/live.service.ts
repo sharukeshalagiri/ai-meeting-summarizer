@@ -48,7 +48,7 @@ const log = logger.child({ module: "live.service" });
 export const startSession = async (input: {
   title: string;
   platform: string | null;
-  /** The signed-in user or the device token's account (w4-acct). */
+  /** The signed-in user or the device token's account. */
   userId: string;
   /** Capture-contract fields; absent for the legacy web page. */
   source?: CaptureSource | null;
@@ -159,7 +159,7 @@ const transcribeOptionsFor = (
   channelLayout: ChannelLayout,
   previousWords: PreviousWords
 ): TranscribeOptions => ({
-  // w4-acct: the owner's provider and glossary apply to every chunk.
+  // The owner's provider and glossary apply to every chunk.
   ...(session.meetingId ? { meetingId: session.meetingId } : {}),
   channelLayout,
   hints: session.hints ?? [],

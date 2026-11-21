@@ -73,7 +73,7 @@ export const deleteForMeeting = (meetingId: string) =>
 export const search = async (input: {
   embedding: number[];
   limit: number;
-  /** Owner: only this user's meetings are ever searched (w4-acct). */
+  /** Owner: only this user's meetings are ever searched. */
   userId: string;
   meetingId?: string | null;
   /** Restrict to these meetings (a series); null = no restriction. */

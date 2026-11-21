@@ -36,7 +36,7 @@ export const sortByDueDate = <
   });
 };
 
-/** One user's tasks across their meetings (w4-acct: scoped by owner). */
+/** One user's tasks across their meetings (scoped by owner). */
 export const listActionItems = async (userId: string, status?: string | null) => {
   if (status && !STATUSES.has(status.toUpperCase())) {
     throw BadRequest("status must be PENDING or COMPLETED");

@@ -8,7 +8,7 @@ import { NOISE_LABELS, PRIORITIES, SENTIMENTS, SUMMARY_MODES } from "../types/su
  * explains the fields the schema declares. Nullable fields are used
  * instead of optional ones (the API wants every `required` key), and
  * every response is still validated by the narrowing parsers in
- * services/w1-sum.parsers.ts.
+ * services/summaryPipeline.parsers.ts.
  */
 
 type Schema = Record<string, unknown>;

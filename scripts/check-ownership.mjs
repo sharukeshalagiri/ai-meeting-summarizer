@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Fails when the current branch changes files outside its track's
- * ownership (docs/OWNERSHIP.md), or touches the Prisma schema/migrations
+ * ownership (docs/process/OWNERSHIP.md), or touches the Prisma schema/migrations
  * outside a schema/ branch.
  *
  *   npm run check:ownership                 # current branch vs origin/main
@@ -64,7 +64,7 @@ if (!inCi) {
   }
 }
 
-const ownership = loadOwnership(path.join(root, "docs/OWNERSHIP.md"));
+const ownership = loadOwnership(path.join(root, "docs/process/OWNERSHIP.md"));
 const result = checkPaths({ branch, paths: [...changed], ownership });
 
 if (result.mode === "skipped") {
@@ -90,6 +90,6 @@ for (const v of result.violations) {
 }
 console.error(
   "\nRevert these, or list them under \"Requests for other tracks\" in your " +
-    "PR. See docs/OWNERSHIP.md and docs/PARALLEL.md."
+    "PR. See docs/process/OWNERSHIP.md and docs/process/PARALLEL.md."
 );
 process.exit(1);

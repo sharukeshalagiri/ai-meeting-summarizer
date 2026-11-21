@@ -81,7 +81,7 @@ person could be "Speaker 2" in chunk n and "Priya" in chunk n+1. Now:
 
 The text fallback gets the previous chunk's labelled lines and the
 meeting's known labels, and maps its labels onto existing profiles by
-name. Test: `backend/test/w2-spk/chunkBoundary.test.ts` reproduces the
+name. Test: `backend/test/speakers/chunkBoundary.test.ts` reproduces the
 split with per-chunk text labels and shows it gone with voice matching.
 
 ### Bench (10 minutes of one AMI meeting; NOT the official AMI DER)

@@ -10,7 +10,7 @@
 ## Files outside ownership
 
 <!-- Must be "None". `npm run check:ownership` and the CI ownership job
-     enforce docs/OWNERSHIP.md. Shared registration files (append-only)
+     enforce docs/process/OWNERSHIP.md. Shared registration files (append-only)
      do not count. -->
 
 None

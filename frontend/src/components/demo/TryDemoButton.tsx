@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getErrorMessage } from "../../api/api";
-import { getDemoStatus, startDemo } from "../../api/w5-demo";
+import { getDemoStatus, startDemo } from "../../api/demo";
 import "./demo.css";
 
 interface Props {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AUTH_REQUIRED_EVENT } from "../../api/api";
-import { fetchMe, logout } from "../../api/w4-acct";
-import type { Account } from "../../types/w4-acct";
+import { fetchMe, logout } from "../../api/account";
+import type { Account } from "../../types/account";
 import { AuthContext, type AuthState } from "./authContext";
 
 /**

@@ -1,9 +1,9 @@
 ---
 name: track-builder
-description: Builds one parallel track (from docs/OWNERSHIP.md) end to end in an isolated worktree and opens its PR. Used by the lead session, two at a time.
+description: Builds one parallel track (from docs/process/OWNERSHIP.md) end to end in an isolated worktree and opens its PR. Used by the lead session, two at a time.
 isolation: worktree
 ---
-You build exactly ONE track. Follow CLAUDE.md and docs/PARALLEL.md exactly.
+You build exactly ONE track. Follow CLAUDE.md and docs/process/PARALLEL.md exactly.
 - First: create branch `<track>/impl` in your worktree and run
   `npm run worktree:env <track>`.
 - Phase 1 (plan): read the code and return ONLY a plan: files you will create or

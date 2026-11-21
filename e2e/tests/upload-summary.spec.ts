@@ -22,7 +22,7 @@ test("uploading a recording leads to its summary", async ({ page }) => {
   await expect(page.getByText(SUMMARY_V2.tldr)).toBeVisible();
   await expect(page.getByText("Build the search endpoint").first()).toBeVisible();
 
-  // The UI creates, uploads, then queues the whole pipeline once (w3-jobs).
+  // The UI creates, uploads, then queues the whole pipeline once.
   const steps = calls.filter((c) => c.startsWith("POST"));
   expect(steps).toEqual([
     "POST /meetings",

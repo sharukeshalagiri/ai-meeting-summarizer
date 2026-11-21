@@ -6,12 +6,12 @@ import { createDeviceAuth } from "../src/middleware/deviceAuth.middleware";
 import { errorHandler } from "../src/middleware/error.middleware";
 
 /**
- * Device auth with per-user tokens (w4-acct). The shared DEVICE_TOKEN
+ * Device auth with per-user tokens. The shared DEVICE_TOKEN
  * is gone: a Bearer token must be a live token of some account, and the
  * request then runs as that account. Without a header the session is
  * used (test/setup.auth.ts signs requests in unless x-test-user is
  * "anonymous"). The real routes, revocation and both recorders' upload
- * paths are covered in test/w4-acct/devices.test.ts.
+ * paths are covered in test/accounts/devices.test.ts.
  */
 
 // The real-route test below looks tokens up here; no database.

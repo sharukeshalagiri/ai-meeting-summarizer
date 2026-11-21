@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Sourced } from "../../types/w1-sum";
+import type { Sourced } from "../../types/summaryPipeline";
 import { SourceChips } from "./EvidenceChip";
 
 /** A heading, or nothing at all when the list is empty. */

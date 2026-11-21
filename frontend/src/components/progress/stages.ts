@@ -1,4 +1,4 @@
-import type { MeetingProgress } from "../../types/w3-jobs";
+import type { MeetingProgress } from "../../types/processing";
 
 /**
  * The pipeline's visible steps, in order (backend types/meeting.ts).

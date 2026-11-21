@@ -9,7 +9,7 @@ import {
 /**
  * POST /summarize runs the summary in the background (in-process) and
  * answers at once; the v2 pipeline falls back to the legacy summarizer.
- * Repositories are in-memory fakes; the v2 pipeline (w1-sum resummarize)
+ * Repositories are in-memory fakes; the v2 pipeline (resummarize)
  * and the legacy Gemini summarizer are stubbed, so nothing reaches Gemini.
  */
 
@@ -82,7 +82,7 @@ vi.mock("../../src/repositories/actionItem.repository", () => ({
   },
 }));
 
-vi.mock("../../src/services/w1-sum.service", () => ({
+vi.mock("../../src/services/summaryPipeline.service", () => ({
   resummarize: async () => {
     if (!store.v2) throw new Error("no v2 script");
     await store.v2();

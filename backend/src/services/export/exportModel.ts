@@ -56,7 +56,7 @@ export interface ExportInput {
     status: string;
     needsReview: boolean;
   }[];
-  /** Task texts a human rejected (w1-sum corrections). */
+  /** Task texts a human rejected (review corrections). */
   rejectedTasks: string[];
   segments: { startMs: number; speaker: string; text: string; channel: string | null; noiseLabel: string | null }[];
   /** The owner's label for their own (mic) segments. */

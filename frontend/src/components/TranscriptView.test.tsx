@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
-import type { SpeakerSegment } from "../types/w2-spk";
+import type { SpeakerSegment } from "../types/speakers";
 import TranscriptView from "./TranscriptView";
 
 /**

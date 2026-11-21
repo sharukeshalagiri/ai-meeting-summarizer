@@ -16,7 +16,7 @@ import {
 } from "./ownership.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const ownership = loadOwnership(path.join(root, "docs/OWNERSHIP.md"));
+const ownership = loadOwnership(path.join(root, "docs/process/OWNERSHIP.md"));
 const { tracks, shared } = ownership;
 
 const matches = (glob, p) => globToRegExp(glob).test(p);
@@ -56,7 +56,7 @@ describe("globToRegExp", () => {
 });
 
 describe("parseOwnership", () => {
-  it("reads every track from docs/OWNERSHIP.md with unique slots", () => {
+  it("reads every track from docs/process/OWNERSHIP.md with unique slots", () => {
     assert.deepEqual([...tracks.keys()], [
       "w1-ext", "w1-desk", "w1-asr", "w1-sum",
       "w2-spk", "w2-eval", "w2-bot", "w3-jobs", "w3-infra",
