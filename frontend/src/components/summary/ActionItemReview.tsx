@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { getErrorMessage } from "../../api/api";
-import { reviewActionItem } from "../../api/w1-sum";
+import { reviewActionItem } from "../../api/summaryPipeline";
 import type { Priority } from "../../types/meeting";
-import type { ActionItemRow, ActionItemV2, ReviewAction } from "../../types/w1-sum";
+import type { ActionItemRow, ActionItemV2, ReviewAction } from "../../types/summaryPipeline";
 import { SourceChips } from "./EvidenceChip";
 import { formatDue, isOverdue } from "./summaryData";
 

@@ -46,7 +46,7 @@ export const getMeetingById = asyncHandler(
       requireParam(req.params.id, "meeting id")
     );
 
-    // Speaker renames are projected at read time (w2-spk D5).
+    // Speaker renames are projected at read time.
     return sendSuccess(res, await withSpeakerNames(meeting), "Meeting fetched");
   }
 );

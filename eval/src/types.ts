@@ -1,6 +1,6 @@
 /**
  * Shapes shared by the evaluation harness. The answer-key format is the
- * one in fixtures/transcripts/README.md; every field added for w2-eval is
+ * one in fixtures/transcripts/README.md; every field added for the eval harness is
  * optional so the original keys stay valid.
  */
 
@@ -18,7 +18,7 @@ export interface ExpectedItem {
   owner?: string | null;
   /** As spoken ("Friday"); null = the summary must not invent one. */
   dueDate?: string | null;
-  /** w2-eval: the calendar date `dueDate` means, given the case's meetingStart/timezone. */
+  /** The calendar date `dueDate` means, given the case's meetingStart/timezone. */
   dueResolved?: string | null;
   evidenceStartMs: number[];
 }
@@ -34,12 +34,12 @@ export interface AnswerKey {
   transcript: string;
   mode: string;
   description?: string;
-  /** w2-eval: the recording user's speaker name (whose perspective the summary takes). */
+  /** The recording user's speaker name (whose perspective the summary takes). */
   me?: string;
-  /** w2-eval: exact number of produced items expected for a kind, e.g. { actionItem: 0 }. */
+  /** Exact number of produced items expected for a kind, e.g. { actionItem: 0 }. */
   counts?: Record<string, number>;
   mustAppear: ExpectedItem[];
-  /** w2-eval: allowed but not required; neutral for precision. */
+  /** Allowed but not required; neutral for precision. */
   mayAppear?: ExpectedItem[];
   mustNotAppear: ForbiddenItem[];
 }

@@ -91,7 +91,7 @@ export interface MockOptions {
   summarized?: boolean;
   /**
    * POST /resummarize outlives its wait and returns { queued: true }
-   * (w3-jobs); the result arrives over the progress stream.
+   *; the result arrives over the progress stream.
    */
   resummarizeQueued?: boolean;
 }
@@ -130,7 +130,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
 
   // The page (localhost) and the mocked API (127.0.0.1:9) are different
   // origins, so the browser applies CORS to fulfilled responses too.
-  // The app sends credentials (w4-acct: session cookie), and a
+  // The app sends credentials (the session cookie), and a
   // credentialed response must name the origin and list headers
   // explicitly ("*" is not honoured then).
   const headers: Record<string, string> = {};
@@ -146,7 +146,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
   };
   setCors(undefined);
 
-  // w4-acct: the signed-in account (GET /auth/me) the Layout gate needs.
+  // The signed-in account (GET /auth/me) the Layout gate needs.
   const account = {
     id: "user-e2e",
     name: "E2E User",
@@ -193,7 +193,7 @@ export const mockApi = async (page: Page, options: MockOptions) => {
       case `POST ${base}/audio`:
         return ok(route, meeting());
       case `POST ${base}/process`:
-        // Same 202 body as meeting.service startProcessing (w3-jobs).
+        // Same 202 body as meeting.service startProcessing.
         pending = "process";
         return ok(route, { meetingId: MEETING_ID, status: "PROCESSING", processingStage: "TRANSCRIBING" }, 202);
       case `POST ${base}/resummarize`:

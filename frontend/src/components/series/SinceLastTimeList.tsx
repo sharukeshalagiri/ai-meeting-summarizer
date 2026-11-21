@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { getErrorMessage } from "../../api/api";
-import { resolveSinceLastTime } from "../../api/w4-acct";
+import { resolveSinceLastTime } from "../../api/account";
 import { useAudioPlayer } from "../../lib/audio/useAudioPlayer";
-import type { SinceLastTime, SinceLastTimeItem } from "../../types/w4-acct";
+import type { SinceLastTime, SinceLastTimeItem } from "../../types/account";
 
 const STATUS_LABEL: Record<SinceLastTimeItem["status"], string> = {
   done: "Done",

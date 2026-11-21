@@ -18,7 +18,7 @@ const PUBLIC_PATHS = new Set(["/login"]);
 
 /**
  * App shell: one header and nav for every page, so navigation does not
- * shift between routes. It is also the sign-in gate (w4-acct): every
+ * shift between routes. It is also the sign-in gate: every
  * page except /login needs an account, and an expired session sends
  * the user to /login, then back where they were.
  */

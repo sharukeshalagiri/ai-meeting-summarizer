@@ -1,9 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { getData, getErrorMessage } from "../api/api";
-import { resummarize } from "../api/w1-sum";
+import { resummarize } from "../api/summaryPipeline";
 import { useFetch } from "../hooks/useFetch";
-import type { MeetingProgress } from "../types/w3-jobs";
+import type { MeetingProgress } from "../types/processing";
 import ProgressSteps from "./progress/ProgressSteps";
 import { failureMessage, isFailed } from "./progress/stages";
 import { useMeetingProgress } from "./progress/useMeetingProgress";
@@ -13,7 +13,7 @@ import type {
   ModeSetting,
   SummaryReview,
   SummaryV2,
-} from "../types/w1-sum";
+} from "../types/summaryPipeline";
 import { ActionItemReview } from "./summary/ActionItemReview";
 import { Block, ItemBlock } from "./summary/ItemList";
 import { ModePicker } from "./summary/ModePicker";
@@ -90,7 +90,7 @@ function SentimentBadge({ overall }: { overall: Sentiment }) {
 }
 
 /**
- * Schema version 1 (summaries written before w1-sum). Unchanged from
+ * Schema version 1 (summaries written before the v2 pipeline). Unchanged from
  * the original view so old rows keep rendering exactly as before.
  */
 function LegacySummary({ summary }: { summary: StructuredSummary }) {
@@ -347,7 +347,7 @@ function SummaryView({ summary }: Props) {
   const [fresh, setFresh] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A re-summarize that outlived the request (w3-jobs) and is followed
+  // A re-summarize that outlived the request and is followed
   // over the meeting's progress stream instead.
   const [queued, setQueued] = useState(false);
 

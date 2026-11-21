@@ -27,7 +27,7 @@ const log = logger.child({ module: "speakers.service" });
  *
  * Speakers are addressed by a `key`: the SpeakerProfile id, or
  * `label:<speaker>` for segments that have no profile yet (uploads and
- * meetings diarized before w2-spk). Renaming a `label:` speaker creates
+ * meetings diarized before voice attribution). Renaming a `label:` speaker creates
  * its profile and links those segments.
  */
 
@@ -69,7 +69,7 @@ export const listSpeakers = async (meetingId: string): Promise<SpeakerView[]> =>
   ]);
 
   const mic = profiles.find((p) => p.label === MIC_LABEL);
-  // w4-acct: the owner's display name labels their own (mic) segments.
+  // The owner's display name labels their own (mic) segments.
   const meLabel = await meLabelForMeeting(meetingId);
   const suggestions = new Map(
     suggestNames(
@@ -242,7 +242,7 @@ export const loadSpeakerRenames = async (meetingId: string): Promise<RenameMap> 
 /**
  * A meeting (as GET /meetings/:id returns it) with current speaker
  * names in its summary and action items. One line to wire in the
- * meeting controller; see the w2-spk PR.
+ * meeting controller.
  */
 export const withSpeakerNames = async <
   T extends { id: string; summary?: unknown; actionItems?: unknown },

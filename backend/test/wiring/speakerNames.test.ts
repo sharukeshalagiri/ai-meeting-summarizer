@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/app";
 
 /**
- * Speaker renames reach the summary and the tasks (w2-spk D5, read-time
+ * Speaker renames reach the summary and the tasks (read-time
  * projection): after "Speaker 2" is renamed to Priya, every response
  * that serves summary evidence or action-item owners shows Priya, while
  * the stored summary and action items keep the old label.

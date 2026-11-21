@@ -11,7 +11,7 @@ import { AppError, BadRequest } from "../types/errors";
 const log = logger.child({ module: "rateLimit.middleware" });
 
 /**
- * Public-instance safety (w5-demo): rate limits on /api and caps on how
+ * Public-instance safety: rate limits on /api and caps on how
  * much audio one request can make the server process.
  *
  * In memory, per process: the app runs as one backend container, and a

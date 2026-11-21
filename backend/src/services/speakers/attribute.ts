@@ -86,7 +86,7 @@ export const defaultDeps: SpeakerDeps = {
 };
 
 /**
- * `meLabel` (w4-acct): the owner's display name from Settings for an
+ * `meLabel`: the owner's display name from Settings for an
  * unnamed mic profile; defaults to ME_DISPLAY_NAME ("You").
  */
 export const shownName = (profile: Profile, meLabel: string = env.meDisplayName): string =>
@@ -132,7 +132,7 @@ const diarizeRemote = async (
  *
  * - "mic" segments are the user (profile `mic`, shown as its display
  *   name or ME_DISPLAY_NAME). Echo of remote speech on the mic was
- *   already removed by the ASR (w1-asr).
+ *   already removed by the ASR.
  * - Remote (or mono) segments are diarized by the provider into
  *   chunk-local clusters, which are matched to the meeting's profiles
  *   by voice centroid (matcher.ts), or by label for text/Deepgram.

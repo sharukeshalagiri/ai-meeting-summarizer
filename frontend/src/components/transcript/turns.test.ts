@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SpeakerSegment } from "../../types/w2-spk";
+import type { SpeakerSegment } from "../../types/speakers";
 import {
   buildTurns,
   filterTurns,

@@ -30,7 +30,7 @@ export const registerWorkers = async (
     await queue.work(name, handler as JobHandler<unknown>);
   }
 
-  // w4-acct: audio retention, a recurring job.
+  // Audio retention, a recurring job.
   await queue.work(Queues.AUDIO_RETENTION, async () => {
     const { sweepAudio } = await import("../services/retention/retention.service");
     await sweepAudio();

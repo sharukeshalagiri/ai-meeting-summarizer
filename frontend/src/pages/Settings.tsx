@@ -1,8 +1,8 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { getErrorMessage } from "../api/api";
-import { changePassword, saveSettings } from "../api/w4-acct";
+import { changePassword, saveSettings } from "../api/account";
 import { useAuth } from "../lib/auth/authContext";
-import type { Account, RetentionPolicy } from "../types/w4-acct";
+import type { Account, RetentionPolicy } from "../types/account";
 
 const MODE_LABELS: Record<string, string> = {
   AUTO: "Decide automatically",

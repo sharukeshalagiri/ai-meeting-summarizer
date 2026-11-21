@@ -2,7 +2,7 @@ import { containsAll } from "./match";
 import type { AnswerKey, ExpectedItem, ForbiddenItem } from "./types";
 
 /**
- * Turns the user's Correction rows (w1-sum review: accept / edit /
+ * Turns the user's Correction rows (summary review: accept / edit /
  * reject an action item; a mode change) into PROPOSED answer-key edits.
  * Nothing is written here: the CLI prints the proposals and writes only
  * with --write, after the user has read them.

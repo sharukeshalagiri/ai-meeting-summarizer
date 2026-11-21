@@ -46,7 +46,7 @@ const asNumber = (name: string, fallback: number): number => {
 const isProduction = process.env.NODE_ENV === "production";
 
 /**
- * DEPRECATED (w4-acct): the shared recorder secret. Recorders now send a
+ * DEPRECATED: the shared recorder secret. Recorders now send a
  * per-user device token (Devices page), and this value is ignored. Kept
  * only so an existing .env still loads; it is no longer required in
  * production.
@@ -55,7 +55,7 @@ const deviceToken = (): string | null =>
   process.env.DEVICE_TOKEN?.trim() || null;
 
 /**
- * Which TranscriptionProvider speech.service uses (w1-asr):
+ * Which TranscriptionProvider speech.service uses:
  * "local" = the ai-service (faster-whisper, free, default);
  * "deepgram" = Deepgram's hosted API, which is PAID per audio minute and
  * needs DEEPGRAM_API_KEY. Validated here so a typo fails at boot.
@@ -80,7 +80,7 @@ const transcriptionProvider = (): "local" | "deepgram" => {
 };
 
 /**
- * Where background jobs run (w3-jobs): "pgboss" (durable, in Postgres;
+ * Where background jobs run: "pgboss" (durable, in Postgres;
  * the default) or "memory" (in-process, lost on restart). Tests always
  * use "memory" so they never need a database.
  */
@@ -108,7 +108,7 @@ const storageDriver = (): "local" => {
 };
 
 /**
- * Speaker diarization (w2-spk): voice (ai-service speaker embeddings,
+ * Speaker diarization: voice (ai-service speaker embeddings,
  * default), text (Gemini infers turns), or deepgram (paid per minute,
  * needs DEEPGRAM_API_KEY). Voice falls back to text when unavailable.
  */
@@ -132,7 +132,7 @@ const diarizationProvider = (): "voice" | "text" | "deepgram" => {
 };
 
 /**
- * Signs the session cookie (w4-acct). Required in production; in
+ * Signs the session cookie. Required in production; in
  * development a fixed placeholder keeps sessions across ts-node-dev
  * restarts, with a warning at boot (lib/auth/session.ts).
  */
@@ -231,7 +231,7 @@ export const env = {
   /** nova-2 takes `keywords`; nova-3 models take `keyterm` instead. */
   deepgramModel: optional("DEEPGRAM_MODEL", "nova-2"),
 
-  /** See jobsDriver() above (w3-jobs). */
+  /** See jobsDriver() above. */
   jobsDriver: jobsDriver(),
   /** See storageDriver() above. */
   storageDriver: storageDriver(),
@@ -242,7 +242,7 @@ export const env = {
   /** Label for the user's own (mic channel) segments until renamed. */
   meDisplayName: optional("ME_DISPLAY_NAME", "You").trim().slice(0, 60) || "You",
 
-  /** See sessionSecret() above (w4-acct). Null = development placeholder. */
+  /** See sessionSecret() above. Null = development placeholder. */
   sessionSecret: sessionSecret(),
   /** Days a login lasts without activity (the cookie is rolling). */
   sessionMaxAgeDays: asNumber("SESSION_MAX_AGE_DAYS", 30),
@@ -251,7 +251,7 @@ export const env = {
    * where `npm --prefix backend run user:password` creates the account.
    */
   authAllowSignup: asBoolean("AUTH_ALLOW_SIGNUP", !isProduction),
-  /** SMTP for "email this summary" (w4-acct). Unset host = email export off. */
+  /** SMTP for "email this summary". Unset host = email export off. */
   smtpHost: process.env.SMTP_HOST?.trim() || null,
   smtpPort: asNumber("SMTP_PORT", 587),
   /** true = TLS from the start (port 465); false = STARTTLS. */
@@ -261,24 +261,24 @@ export const env = {
   smtpFrom: optional("SMTP_FROM", "Meeting Companion <no-reply@localhost>"),
   /** How often the audio-retention job runs (cron, UTC). Hourly by default. */
   retentionCron: optional("RETENTION_CRON", "17 * * * *"),
-  /** ffmpeg binary for live assembly (w3-jobs); on PATH by default. */
+  /** ffmpeg binary for live assembly; on PATH by default. */
   ffmpegPath: optional("FFMPEG_PATH", "ffmpeg"),
 
-  /** w5-demo: "Try the demo" signs visitors into the read-only demo account. */
+  /** "Try the demo" signs visitors into the read-only demo account. */
   demoMode: asBoolean("DEMO_MODE", false),
-  /** w5-demo: a demo sign-in lasts this many hours (sessions are swept after). */
+  /** A demo sign-in lasts this many hours (sessions are swept after). */
   demoSessionHours: asNumber("DEMO_SESSION_HOURS", 2),
-  /** w5-demo: per-client rate limits on /api. On by default only in production. */
+  /** Per-client rate limits on /api. On by default only in production. */
   rateLimitEnabled: asBoolean("RATE_LIMIT_ENABLED", isProduction),
-  /** w5-demo: requests per minute per user (or per IP when signed out). */
+  /** Requests per minute per user (or per IP when signed out). */
   rateLimitPerMinute: asNumber("RATE_LIMIT_PER_MINUTE", 300),
-  /** w5-demo: expensive requests (uploads, processing, chat, sign-ins) per hour. */
+  /** Expensive requests (uploads, processing, chat, sign-ins) per hour. */
   rateLimitHeavyPerHour: asNumber("RATE_LIMIT_HEAVY_PER_HOUR", 60),
-  /** w5-demo: longest recording or live capture processed, in minutes; 0 = no cap. */
+  /** Longest recording or live capture processed, in minutes; 0 = no cap. */
   maxAudioMinutes: asNumber("MAX_AUDIO_MINUTES", isProduction ? 180 : 0),
-  /** w5-demo: measures an upload's duration for MAX_AUDIO_MINUTES. */
+  /** Measures an upload's duration for MAX_AUDIO_MINUTES. */
   ffprobePath: optional("FFPROBE_PATH", "ffprobe"),
-  /** w5-demo, demo:seed only: text-to-speech engine, auto | sapi | espeak | tones. */
+  /** demo:seed only: text-to-speech engine, auto | sapi | espeak | tones. */
   demoTts: optional("DEMO_TTS", "auto"),
 } as const;
 

@@ -41,7 +41,7 @@ export interface LiveMeetingInfo {
 const FLUSH_TIMEOUT_MS = 2 * 60_000;
 
 /**
- * w4-acct: the web page is signed in, so it authenticates with the
+ * The web page is signed in, so it authenticates with the
  * session cookie rather than a device token (recorders outside the
  * browser use per-user tokens from the Devices page). The frontend and
  * backend are on different ports in development, so the cookie needs

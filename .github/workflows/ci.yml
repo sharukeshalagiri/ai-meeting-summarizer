@@ -112,5 +112,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check changed files against docs/OWNERSHIP.md
+      - name: Check changed files against docs/process/OWNERSHIP.md
         run: node scripts/check-ownership.mjs --base origin/${{ github.base_ref }} --branch "${{ github.head_ref }}"

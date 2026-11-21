@@ -64,7 +64,7 @@ export interface TranscribeOptions {
    */
   previousWords?: (StoredWord & { channel?: string | null })[];
   /**
-   * w4-acct: the meeting being transcribed, so the owner's Settings
+   * The meeting being transcribed, so the owner's Settings
    * (transcription provider, glossary) apply. Without it the meeting is
    * looked up by the recording's path (the upload pipeline).
    */

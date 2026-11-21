@@ -4,7 +4,7 @@ import type {
   OneOnOneSection,
   ProjectSection,
   SummaryV2,
-} from "../../types/w1-sum";
+} from "../../types/summaryPipeline";
 import { Block, ItemBlock, ItemList } from "./ItemList";
 import { formatDue } from "./summaryData";
 

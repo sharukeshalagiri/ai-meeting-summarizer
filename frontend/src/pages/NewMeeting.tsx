@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getErrorMessage, postData } from "../api/api";
-import { retryProcessing, startProcessing } from "../api/w3-jobs";
+import { retryProcessing, startProcessing } from "../api/processing";
 import ProgressSteps from "../components/progress/ProgressSteps";
 import {
   failedStage,
@@ -11,7 +11,7 @@ import {
 } from "../components/progress/stages";
 import { useMeetingProgress } from "../components/progress/useMeetingProgress";
 import type { Meeting } from "../types/meeting";
-import type { MeetingProgress } from "../types/w3-jobs";
+import type { MeetingProgress } from "../types/processing";
 
 const TEN_MINUTES = 10 * 60 * 1000;
 

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { getErrorMessage } from "../api/api";
-import { login, signup } from "../api/w4-acct";
+import { login, signup } from "../api/account";
 import { TryDemoButton } from "../components/demo/TryDemoButton";
 import { useAuth } from "../lib/auth/authContext";
 
@@ -21,7 +21,7 @@ function Login() {
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // w5-demo: where "Try the demo" lands (the newest demo meeting).
+  // Where "Try the demo" lands (the newest demo meeting).
   const [demoTarget, setDemoTarget] = useState<string | null>(null);
 
   if (account) return <Navigate to={demoTarget ?? next} replace />;

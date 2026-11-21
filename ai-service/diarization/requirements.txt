@@ -1,4 +1,4 @@
-# Speaker diarization (w2-spk). Included from ../requirements.txt.
+# Speaker diarization. Included from ../requirements.txt.
 # sherpa-onnx runs the speaker-embedding ONNX model on CPU with no torch
 # (Apache-2.0; the weights it loads are downloaded on first use, see
 # diarization/models.py). pyannote is NOT installed by default: it pulls

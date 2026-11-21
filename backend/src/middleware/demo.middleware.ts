@@ -5,7 +5,7 @@ import { AppError } from "../types/errors";
 
 /**
  * The demo account is read-only, enforced here on the server for every
- * route, not only by hiding buttons (w5-demo).
+ * route, not only by hiding buttons.
  *
  * Mounted in routes/index.ts right after the session is read, before
  * any router, so it covers /live, /meetings, /account, /devices, every
@@ -17,7 +17,7 @@ import { AppError } from "../types/errors";
  * tokens, email exports, re-summarizing and chat, which are all
  * POST/PUT/PATCH/DELETE. The only GET that calls Gemini is search (it
  * embeds the query); the demo answers it with a keyword search instead
- * (routes/w5-demo.routes.ts), mounted before the real one.
+ * (routes/demo.routes.ts), mounted before the real one.
  */
 
 export const DEMO_READ_ONLY_MESSAGE =

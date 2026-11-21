@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { Account } from "../../types/w4-acct";
+import type { Account } from "../../types/account";
 
 export interface AuthState {
   /** null while signed out; undefined while the first check runs. */

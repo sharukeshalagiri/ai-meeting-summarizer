@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { API_BASE_URL, getData, getErrorMessage } from "../api/api";
-import { retryProcessing } from "../api/w3-jobs";
+import { retryProcessing } from "../api/processing";
 import ErrorState from "../components/ErrorState";
 import ProgressSteps from "../components/progress/ProgressSteps";
 import {
@@ -21,7 +21,7 @@ import type { Meeting, Segment } from "../types/meeting";
 import ExportMenu from "../components/export/ExportMenu";
 import SeriesPicker from "../components/series/SeriesPicker";
 import SinceLastTimeList from "../components/series/SinceLastTimeList";
-import type { MeetingAccountFields, SinceLastTime } from "../types/w4-acct";
+import type { MeetingAccountFields, SinceLastTime } from "../types/account";
 import { formatDate, formatDuration } from "../utils/format";
 
 const TABS = [
@@ -50,7 +50,7 @@ function MeetingDetails() {
     `/meetings/${id}/segments`
   );
 
-  // Processing runs as durable background jobs (w3-jobs): follow it
+  // Processing runs as durable background jobs: follow it
   // over SSE while a stage is active, then re-read the meeting quietly
   // (no skeleton) once it settles.
   const active =
@@ -151,7 +151,7 @@ function MeetingDetails() {
   const incomplete = !noSpeech && (hasFailed || !meeting.summary);
 
   const duration = formatDuration(meeting.durationSec);
-  // w4-acct: series link, retention and "Since last time".
+  // Series link, retention and "Since last time".
   const account = meeting as Meeting & MeetingAccountFields;
   const since = (meeting.summary?.data as { sinceLastTime?: SinceLastTime } | null | undefined)?.sinceLastTime;
 

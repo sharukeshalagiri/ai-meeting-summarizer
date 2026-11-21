@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { segmentElementId } from "../lib/audio/jumpToSegment";
 import { useAudioPlayer } from "../lib/audio/useAudioPlayer";
-import type { SpeakerSegment } from "../types/w2-spk";
+import type { SpeakerSegment } from "../types/speakers";
 import SpeakerChip from "./transcript/SpeakerChip";
 import {
   buildTurns,

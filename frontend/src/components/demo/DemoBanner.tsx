@@ -1,4 +1,4 @@
-import { DEMO_EMAIL } from "../../api/w5-demo";
+import { DEMO_EMAIL } from "../../api/demo";
 import "./demo.css";
 
 /**

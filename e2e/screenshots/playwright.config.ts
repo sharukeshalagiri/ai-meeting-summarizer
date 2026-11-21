@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 import { API_BASE } from "../tests/mockApi";
 
 /**
- * README screenshots (w5-demo): `npm run screenshots` at the repo root.
+ * README screenshots: `npm run screenshots` at the repo root.
  *
  * The seeded demo, rendered by the real frontend with the API answered
  * in the browser (demoApi.ts) from the same builder the seed uses

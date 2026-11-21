@@ -4,7 +4,7 @@ import { toJsonValueV2 } from "../types/summary";
 import { DEMO_EMAIL, DEMO_NAME, type DemoMeeting } from "./types";
 
 /**
- * The only database access of demo mode (w5-demo): find the demo
+ * The only database access of demo mode: find the demo
  * account, replace its meetings with the seed, and keyword search its
  * segments (the demo never calls Gemini, so it has no embeddings).
  */

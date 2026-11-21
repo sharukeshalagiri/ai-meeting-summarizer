@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from "react";
-import type { NameSignal, SpeakerView } from "../../types/w2-spk";
+import type { NameSignal, SpeakerView } from "../../types/speakers";
 
 const SIGNAL_TEXT: Record<NameSignal, string> = {
   self_intro: "introduced themself",

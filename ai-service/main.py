@@ -144,7 +144,7 @@ async def transcribe_audio(request: Request):
             except OSError:
                 pass
 
-# w2-spk: speaker diarization (POST /diarize).
+# Speaker diarization (POST /diarize).
 from diarization.routes import router as diarization_router  # noqa: E402
 
 app.include_router(diarization_router)

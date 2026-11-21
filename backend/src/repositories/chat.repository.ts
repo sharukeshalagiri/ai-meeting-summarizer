@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma";
 
 export const create = (data: {
   conversationId: string;
-  /** Owner of the thread (w4-acct). */
+  /** Owner of the thread. */
   userId: string;
   meetingId: string | null;
   role: string;

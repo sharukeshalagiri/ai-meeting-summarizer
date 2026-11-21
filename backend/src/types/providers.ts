@@ -1,9 +1,9 @@
 /**
  * Provider interfaces for swappable speech back ends.
  *
- * Implemented and wired: TranscriptionProvider by w1-asr
+ * Implemented and wired: TranscriptionProvider
  * (providers/transcription/, TRANSCRIPTION_PROVIDER local | deepgram),
- * DiarizationProvider by w2-spk (services/speakers/providers.ts,
+ * DiarizationProvider (services/speakers/providers.ts,
  * DIARIZATION_PROVIDER voice | text | deepgram). Services depend on these
  * interfaces, not on a concrete client, so a back end can be swapped
  * without touching callers.

@@ -1,9 +1,9 @@
 /**
  * Speaker renames applied at READ time (pure; no I/O).
  *
- * A rename updates segments in place (they are w2-spk's), but the
+ * A rename updates segments in place (speaker attribution owns them), but the
  * summary JSON and action items are produced by the summary pipeline
- * (w1-sum) and must not be rewritten or regenerated for a rename. So
+ * and must not be rewritten or regenerated for a rename. So
  * the response is projected instead: wherever the summary or a task
  * names a speaker, the current name is substituted.
  *
@@ -15,7 +15,7 @@
  * Wired (speakers.service `withSpeakerNames` / `withOwnerNames`) on
  * GET /meetings/:id, /summary, /action-items, /summary-review, the
  * resummarize and action-item review responses (meeting.controller,
- * w1-sum.controller), GET /action-items (actionItem.controller), and
+ * summaryPipeline.controller), GET /action-items (actionItem.controller), and
  * exports (export.service loadExport).
  */
 

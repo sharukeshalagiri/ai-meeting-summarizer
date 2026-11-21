@@ -1,7 +1,7 @@
 """Recorder constants and user settings.
 
 The audio format lives here as single constants so it can change in one
-place. It must stay identical to the Chrome extension's (w1-ext): both
+place. It must stay identical to the Chrome extension's: both
 recorders feed the same backend and the same channel-aware ASR.
 
 PROVISIONAL: the chunk format is pending the engineer's decision

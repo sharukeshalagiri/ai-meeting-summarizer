@@ -3,7 +3,7 @@ import type {
   ModeSetting,
   SummaryMode,
   SummaryV2,
-} from "../../types/w1-sum";
+} from "../../types/summaryPipeline";
 
 /**
  * Helpers for summary schema v2: version detection, a defensive reader

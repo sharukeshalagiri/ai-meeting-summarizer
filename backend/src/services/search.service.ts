@@ -41,7 +41,7 @@ export const search = async (input: {
   query: string;
   userId: string;
   meetingId?: string | null;
-  /** w4-acct: limit to one series' meetings. */
+  /** Limit to one series' meetings. */
   seriesId?: string | null;
   limit?: number;
 }) => {
@@ -72,7 +72,7 @@ export const search = async (input: {
 };
 
 /**
- * w4-acct: every search is limited to the user's own meetings (the SQL
+ * Every search is limited to the user's own meetings (the SQL
  * filters on Meeting.userId), and optionally to one meeting or series.
  * A meeting or series id of another account is a 404, like a missing one.
  */

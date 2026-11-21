@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { listSeries } from "../api/w4-acct";
-import type { SeriesSummary } from "../types/w4-acct";
+import { listSeries } from "../api/account";
+import type { SeriesSummary } from "../types/account";
 import { Link, useSearchParams } from "react-router-dom";
 import EmptyState from "../components/EmptyState";
 import { getErrorMessage, postData } from "../api/api";
@@ -31,7 +31,7 @@ function Ask() {
   // Scoping to one meeting narrows retrieval to that transcript.
   const meetingId = params.get("meetingId");
 
-  // w4-acct: or to one series (Prep links here with ?seriesId=).
+  // Or to one series (Prep links here with ?seriesId=).
   const [seriesId, setSeriesId] = useState<string | null>(params.get("seriesId"));
   const [series, setSeries] = useState<SeriesSummary[]>([]);
 

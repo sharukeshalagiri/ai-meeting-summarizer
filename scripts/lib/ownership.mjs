@@ -1,6 +1,6 @@
 /**
  * Ownership rules for parallel tracks, shared by check-ownership.mjs and
- * worktree-env.mjs. The data lives in docs/OWNERSHIP.md (the fenced
+ * worktree-env.mjs. The data lives in docs/process/OWNERSHIP.md (the fenced
  * ```ownership block) so humans and scripts read the same source.
  *
  * Pure functions only; tested by ownership.test.mjs (node --test).
@@ -61,7 +61,7 @@ export function parseOwnership(markdown) {
   const block = /```ownership\r?\n([\s\S]*?)```/.exec(markdown);
 
   if (!block) {
-    throw new Error("docs/OWNERSHIP.md has no ```ownership block");
+    throw new Error("docs/process/OWNERSHIP.md has no ```ownership block");
   }
 
   const tracks = new Map();
@@ -105,7 +105,7 @@ export function parseOwnership(markdown) {
   const slots = [...tracks.values()].map((t) => t.slot);
 
   if (new Set(slots).size !== slots.length) {
-    throw new Error("Two tracks share a port slot in docs/OWNERSHIP.md");
+    throw new Error("Two tracks share a port slot in docs/process/OWNERSHIP.md");
   }
 
   return { tracks, shared };
@@ -256,7 +256,7 @@ export function portsForSlot(slot) {
   if (ports.aiService > 6000) {
     throw new Error(
       `Slot ${slot} would use ports up to ${ports.aiService}, past 6000. ` +
-        "Pick a lower free slot in docs/OWNERSHIP.md."
+        "Pick a lower free slot in docs/process/OWNERSHIP.md."
     );
   }
 

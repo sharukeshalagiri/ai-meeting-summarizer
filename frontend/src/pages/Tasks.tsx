@@ -12,7 +12,7 @@ import {
 } from "../components/summary/summaryData";
 import "../components/summary/summary.css";
 import type { ActionItemRecord } from "../types/meeting";
-import type { ActionItemRow } from "../types/w1-sum";
+import type { ActionItemRow } from "../types/summaryPipeline";
 
 /** v2 rows carry dueSpoken / needsReview; v1 rows simply lack them. */
 type TaskRecord = ActionItemRecord & Partial<ActionItemRow>;

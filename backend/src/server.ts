@@ -14,7 +14,7 @@ const server = app.listen(env.port, () => {
 });
 
 /**
- * The job queue and its workers run in this process (w3-jobs). The
+ * The job queue and its workers run in this process. The
  * stale live-session sweep is one of its scheduled jobs (live-reap,
  * every 5 minutes), so it runs once per tick even with several
  * processes, and not at all while the queue is down. A queue

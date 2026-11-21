@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getErrorMessage } from "../../api/api";
-import { acceptSpeakerName, getSpeakers, renameSpeaker } from "../../api/w2-spk";
-import type { SpeakerView } from "../../types/w2-spk";
+import { acceptSpeakerName, getSpeakers, renameSpeaker } from "../../api/speakers";
+import type { SpeakerView } from "../../types/speakers";
 
 /**
  * Speakers of the open meeting: suggestions from the server, and renames

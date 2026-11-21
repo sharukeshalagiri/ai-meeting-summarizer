@@ -10,7 +10,7 @@ export const API_BASE_URL =
   import.meta.env.VITE_API_URL ?? "http://localhost:5000/api";
 
 /**
- * Signed-in requests use the session cookie (w4-acct), so every request
+ * Signed-in requests use the session cookie, so every request
  * sends credentials. In development the frontend and backend are on
  * different localhost ports: the same site, so the SameSite=Lax cookie
  * is sent, but CORS needs withCredentials. Recorders authenticate with

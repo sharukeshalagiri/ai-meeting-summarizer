@@ -20,7 +20,7 @@ export const Queues = {
   LIVE_ASSEMBLE: "live-assemble",
   LIVE_LATE: "live-late",
   LIVE_REAP: "live-reap",
-  /** w4-acct: deletes recordings per each user's retention setting. */
+  /** Deletes recordings per each user's retention setting. */
   AUDIO_RETENTION: "audio-retention",
 } as const;
 
@@ -94,7 +94,7 @@ export const QUEUE_DEFINITIONS: QueueDefinition[] = [
     expireInSeconds: 5 * 60,
   },
   {
-    // w4-acct. No retries: the next scheduled run picks up anything left.
+    // No retries: the next scheduled run picks up anything left.
     name: Queues.AUDIO_RETENTION,
     retryLimit: 0,
     retryDelaySeconds: 60,

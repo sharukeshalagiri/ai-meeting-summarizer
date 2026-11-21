@@ -31,7 +31,7 @@ For the integrator to fold into `docs/DECISIONS.md`.
   (`REVIEW_CONFIDENCE_THRESHOLD`).
 - Temperature 0 everywhere; calls are sequential (free-tier per-minute
   limits). Every response is validated by the hand-written parsers in
-  `services/w1-sum.parsers.ts`.
+  `services/summaryPipeline.parsers.ts`.
 - Alternatives considered: one big prompt (cheaper, but small talk
   leaked into tasks and evidence was unchecked); embeddings-based
   filtering instead of CLEAN (no labels a person can inspect).
@@ -78,7 +78,7 @@ wins over `Meeting.mode`. Accept / edit / reject of an action item is an
 rows are kept untouched, and the original text of rejected or edited
 tasks is never re-created. Completion state carries over by task text.
 
-## Endpoints (`routes/w1-sum.routes.ts`, under `/api/meetings`)
+## Endpoints (`routes/summaryPipeline.routes.ts`, under `/api/meetings`)
 
 - `GET /:id/summary-review` → `{modeSetting, summaryMode, detectedMode, actionItems}`
 - `PATCH /:id/mode` `{mode}`
@@ -101,12 +101,12 @@ sorts open → due date → undated and flags overdue items.
 1. `backend/src/repositories/segment.repository.ts`: add
    `setNoiseLabels(meetingId, labels: {idx, label}[])` (update
    `TranscriptSegment.noiseLabel` by `(transcriptId, idx)`), then pass it
-   as `writeNoiseLabels` from `w1-sum.service.resummarize` and the two
+   as `writeNoiseLabels` from `summaryPipeline.service.resummarize` and the two
    call sites below.
 2. `backend/src/services/meeting.service.ts:227` (upload `/summarize`):
    switch from `generateSummary` to `runSummaryPipeline` over the stored
    segments + `toJsonValueV2` + `toActionItemInputs` (see
-   `w1-sum.service.resummarize`, which already does exactly this).
+   `summaryPipeline.service.resummarize`, which already does exactly this).
 3. `backend/src/services/live.service.ts:469` (live `/end`): same switch
    for the final summary. Rolling summaries stay on
    `generateRollingSummary`.

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getErrorMessage } from "../../api/api";
-import { listSeries, setMeetingSeries } from "../../api/w4-acct";
-import type { SeriesSummary } from "../../types/w4-acct";
+import { listSeries, setMeetingSeries } from "../../api/account";
+import type { SeriesSummary } from "../../types/account";
 
 const NEW = "__new__";
 

@@ -5,7 +5,7 @@
  *   npm run worktree:env <track>          e.g. npm run worktree:env w1-sum
  *   node scripts/worktree-env.mjs <track> --skip-install --skip-db
  *
- * 1. Ports from the track's slot in docs/OWNERSHIP.md:
+ * 1. Ports from the track's slot in docs/process/OWNERSHIP.md:
  *    backend 5100+10*slot, frontend +1, ai-service +2.
  * 2. Writes backend/.env, frontend/.env and ai-service/.env, starting from
  *    the MAIN checkout's env files (falling back to .env.example), with this
@@ -40,7 +40,7 @@ const fail = (message) => {
   process.exit(1);
 };
 
-const { tracks } = loadOwnership(path.join(here, "docs/OWNERSHIP.md"));
+const { tracks } = loadOwnership(path.join(here, "docs/process/OWNERSHIP.md"));
 
 if (!trackName) {
   fail(`usage: npm run worktree:env <track>   (tracks: ${[...tracks.keys()].join(", ")})`);

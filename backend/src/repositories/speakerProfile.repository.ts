@@ -2,7 +2,7 @@ import { prisma } from "../lib/prisma";
 
 /**
  * SpeakerProfile access, plus the TranscriptSegment speaker columns
- * (speaker, speakerId) that follow from it (w2-spk).
+ * (speaker, speakerId) that follow from it.
  *
  * A profile is one voice within one meeting (docs/SCHEMA_NOTES.md):
  * `label` is stable ("Speaker 2", "mic"), `displayName` is the human

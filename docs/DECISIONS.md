@@ -218,7 +218,7 @@ middleware is the single place to swap.
 
 ## Parallel tracks: ownership file, port slots, shared ai-service
 
-- `docs/OWNERSHIP.md` holds one machine-readable block that both
+- `docs/process/OWNERSHIP.md` holds one machine-readable block that both
   `check-ownership.mjs` and `worktree-env.mjs` parse, so the rules and the
   documentation cannot drift apart.
 - Ports come from a fixed per-track **slot** (`5100 + 10*slot`), not from
@@ -583,7 +583,7 @@ Full log: [docs/decisions/w4-acct.md](decisions/w4-acct.md).
 - **The "first user" fallback is gone.** A meeting's owner is always the
   signed-in user or the device token's account; a `userId` in a request
   body is ignored.
-- **Route-coverage test.** `test/w4-acct/isolation.test.ts` enumerates
+- **Route-coverage test.** `test/accounts/isolation.test.ts` enumerates
   every registered route and fails when one is not classified, so a new
   endpoint cannot ship without an isolation check. For each id route,
   Alice with Bob's id gets 404; each list or create route reaches its
@@ -616,7 +616,7 @@ above.
   (the web Live page).
 - **Recorders are unchanged.** Both already send
   `Authorization: Bearer <their setting>`; the user pastes the new token
-  into the same field. `test/w4-acct/devices.test.ts` replays both
+  into the same field. `test/accounts/devices.test.ts` replays both
   recorders' multipart uploads: after revoke, start, chunk, roster and
   end are all 401 and nothing is stored, and one account's token cannot
   upload into another's session (404).
@@ -966,7 +966,7 @@ transcript") one provider of three, and the fallback.
 
 - **The problem.** Each live chunk was labelled in isolation, so one
   person could be "Speaker 2" in chunk n and "Priya" in chunk n+1
-  (reproduced in `backend/test/w2-spk/chunkBoundary.test.ts`).
+  (reproduced in `backend/test/speakers/chunkBoundary.test.ts`).
 - **Decision.** `services/speakers/matcher.ts` (pure) matches each
   chunk cluster to the meeting's SpeakerProfile centroids, greedy and
   one-to-one, best pair first:
@@ -1074,11 +1074,11 @@ transcript") one provider of three, and the fallback.
   and anything added later.
 - The one GET that calls Gemini is `GET /search` (it embeds the
   query). For the demo account it is answered by a keyword search over
-  its own segments (`services/w5-demo.service.ts`), mounted before the
+  its own segments (`services/demo.service.ts`), mounted before the
   real handler; everyone else falls through. Same result shape, so the
   Ask page works. The demo has no embeddings, because making them would
   call Gemini.
-- `test/w5-demo/readOnly.test.ts` lists every registered route (same
+- `test/demo/readOnly.test.ts` lists every registered route (same
   method as w4-acct's isolation test) and sends every non-GET one as
   the demo account: all are 403 and no repository, embedding or Gemini
   call runs. A new mutating route anywhere is covered automatically.
@@ -1218,3 +1218,17 @@ transcript") one provider of three, and the fallback.
   macOS and Linux, published as one GitHub Release. Windows must build;
   macOS and Linux are untested, so their failure only adds a line to the
   release notes.
+
+## Code is named by domain, not by work track (integration)
+
+- **Decision.** Files the parallel tracks created under their track id
+  (`w1-sum.service.ts`, `w3-jobs.routes.ts`, `test/w4-acct/`) are renamed
+  by what they do (`summaryPipeline.service.ts`, `processing.routes.ts`,
+  `test/accounts/`), and track tags are gone from source comments. The
+  process docs moved to `docs/process/`.
+- **Why.** Track ids helped the ownership check while agents worked in
+  parallel, but to a reader they are noise: `w3-jobs.controller.ts` says
+  who wrote it, not what it is. The ownership check still lets a new
+  track create a track-named file; the integrator renames it at merge.
+- **Kept.** Track ids stay where they name the work itself: branch names,
+  `docs/decisions/<track>.md`, and the history in this file.

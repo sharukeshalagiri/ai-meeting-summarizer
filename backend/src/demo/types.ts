@@ -7,7 +7,7 @@ import type {
 } from "../types/summary";
 
 /**
- * Demo mode (track w5-demo): three synthetic, fully processed meetings
+ * Demo mode: three synthetic, fully processed meetings
  * that a visitor can open without signing up. Nothing here is real: the
  * transcripts are the repo's synthetic fixtures (fixtures/transcripts),
  * and the summaries are written by hand in the pipeline's v2 shape.

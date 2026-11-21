@@ -6,7 +6,7 @@
  * is talking). Either way the user should know before the meeting ends.
  */
 
-/** ~ -60 dBFS: below this a channel counts as silent (same idea as w1-asr's SILENT_CHANNEL_RMS). */
+/** ~ -60 dBFS: below this a channel counts as silent (same idea as the ai-service's SILENT_CHANNEL_RMS). */
 export const SILENCE_RMS = 0.001;
 export const SILENCE_WARN_MS = 30_000;
 
