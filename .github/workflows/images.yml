@@ -61,3 +61,15 @@ jobs:
           img=ai-meeting-summarizer/backend:latest
           docker run --rm --entrypoint sh "$img" -c \
             'ffmpeg -version >/dev/null && ffprobe -version >/dev/null && espeak-ng --version && test -f dist/demo/seed.js && test -f dist/lib/auth/cli.js'
+      - name: ai-service image starts and answers /health
+        if: matrix.service == 'ai-service'
+        run: |
+          img=ai-meeting-summarizer/ai-service:latest
+          docker run --rm "$img" python -c "import main, sherpa_onnx, faster_whisper, diarization.routes"
+          docker run -d --name ai -p 8000:8000 "$img"
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/health && exit 0
+            sleep 2
+          done
+          docker logs ai
+          exit 1

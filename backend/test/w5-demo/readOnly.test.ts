@@ -87,6 +87,7 @@ const mounts = async (): Promise<[string, Router][]> => {
   return [
     ["/api/auth", r(await import("../../src/routes/auth.routes"))],
     ["/api/health", r(await import("../../src/routes/w3-jobs-health.routes"))],
+    ["/api/demo", (await import("../../src/routes/w5-demo.routes")).demoRouter],
     ["/api/live", r(await import("../../src/routes/live.routes"))],
     ["/api/users", r(await import("../../src/routes/user.routes"))],
     ["/api/meetings", r(await import("../../src/routes/meeting.routes"))],
@@ -118,11 +119,9 @@ const allRoutes = async (): Promise<string[]> => {
   // A new router mounted in routes/index.ts must be added to mounts().
   expect(subRouters.length).toBe((await mounts()).length);
 
-  const demo = (await import("../../src/routes/w5-demo.routes")).demoRouter;
   const all = [
     ...routesOf("/api", index),
     ...(await mounts()).flatMap(([prefix, router]) => routesOf(prefix, router)),
-    ...routesOf("/api/demo", demo),
   ];
   return [...new Set(all)];
 };
