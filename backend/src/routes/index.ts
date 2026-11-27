@@ -57,8 +57,7 @@ router.use("/health", w3JobsHealthRoutes);
 // Demo status and the "Try the demo" sign-in (public).
 router.use("/demo", demoRouter);
 
-// MAX_AUDIO_MINUTES for live captures.
-router.post("/live/sessions/:id/chunks", durationCaps.live);
+// MAX_AUDIO_MINUTES for live chunks is checked in live.routes.ts, after device auth.
 router.use("/live", liveRoutes);
 
 router.use(requireUser);
