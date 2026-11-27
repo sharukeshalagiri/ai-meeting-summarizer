@@ -7,6 +7,7 @@ import {
 } from "../controllers/live.controller";
 import { requireLiveSessionAccess } from "../middleware/auth.middleware";
 import { requireDeviceToken } from "../middleware/deviceAuth.middleware";
+import { durationCaps } from "../middleware/rateLimit.middleware";
 import {
   handleUploadErrors,
   uploadChunk,
@@ -28,6 +29,8 @@ router.post("/sessions", startLiveSession);
 
 router.post(
   "/sessions/:id/chunks",
+  // MAX_AUDIO_MINUTES, after auth so a 401/404 is never masked by a 413.
+  durationCaps.live,
   // "audio" is the contract field name; "chunk" is the legacy one.
   uploadChunk.fields([
     { name: "audio", maxCount: 1 },

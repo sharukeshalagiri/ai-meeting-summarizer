@@ -53,7 +53,8 @@ keep it running (`npm run dev:ai` there); don't start your own.
   - during a **merge**, origin/main is "theirs": `git checkout --theirs <lockfile>`, then `git commit`.
 - **Commit locally after each milestone** (for example `wip: providers
   done`). WIP commits are fine and need no squash, because PRs are
-  squash-merged on GitHub. Never push before the finish protocol.
+  squash-merged on GitHub: only the PR title and description reach
+  main. Never push before the finish protocol.
 - **Catching up with main:** rebase only before a branch's first push.
   Once a branch is pushed, catch up with `git fetch origin && git merge
   origin/main`. A rebased branch would need a force-push, and
@@ -89,7 +90,11 @@ Run these in order and fix any failure yourself before moving on:
    because it follows the upstream and could target `main`.
 8. `gh pr create --base main --label wave-<n>` and fill in the PR template
    (`.github/pull_request_template.md`). Files outside ownership must be
-   "None".
+   "None". The title becomes the commit subject on main, so it names the
+   change, not the process: `type(scope): what changed`, 72 characters or
+   fewer, no track id, no "Pair"/"wave", no WIP
+   (`npm run check:pr-title -- "<title>"`; the CI `PR title` check
+   enforces it). Keep one PR to one reviewable change.
 9. Wait for CI (`gh pr checks --watch`) and fix any failure yourself.
 10. Report the PR URL and a summary of 5 lines or fewer.
 

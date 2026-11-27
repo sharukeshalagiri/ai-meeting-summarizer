@@ -14,7 +14,6 @@ on:
     paths:
       - backend/src/prompts/**
       - backend/src/services/summary*
-      - backend/src/services/w1-sum*
       - backend/src/lib/dates/**
       - backend/src/types/summary.ts
       - fixtures/transcripts/project-meeting*
