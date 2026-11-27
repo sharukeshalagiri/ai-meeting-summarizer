@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { isValidTimezone } from "../lib/dates";
 import { withSpeakerNames } from "../services/speakers/speakers.service";
-import * as w1SumService from "../services/summaryPipeline.service";
+import * as summaryPipelineService from "../services/summaryPipeline.service";
 import { sendSuccess } from "../types/api";
 import { BadRequest } from "../types/errors";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -29,7 +29,7 @@ const optionalNullable = (value: unknown, field: string): string | null | undefi
 export const getSummaryReview = asyncHandler(
   async (req: Request, res: Response) => {
     const id = requireParam(req.params.id, "meeting id");
-    const review = await w1SumService.getSummaryReview(id);
+    const review = await summaryPipelineService.getSummaryReview(id);
     const { actionItems } = await withSpeakerNames({ id, actionItems: review.actionItems });
 
     return sendSuccess(res, { ...review, actionItems }, "Summary review fetched");
@@ -38,7 +38,7 @@ export const getSummaryReview = asyncHandler(
 
 export const updateMeetingMode = asyncHandler(
   async (req: Request, res: Response) => {
-    const result = await w1SumService.setMode(
+    const result = await summaryPipelineService.setMode(
       requireParam(req.params.id, "meeting id"),
       req.body?.mode
     );
@@ -50,7 +50,7 @@ export const updateMeetingMode = asyncHandler(
 export const resummarizeMeeting = asyncHandler(
   async (req: Request, res: Response) => {
     const id = requireParam(req.params.id, "meeting id");
-    const result = await w1SumService.resummarize(id, {
+    const result = await summaryPipelineService.resummarize(id, {
       mode: req.body?.mode,
       timezone: optionalTimezone(req.body?.timezone),
     });
@@ -76,7 +76,7 @@ export const reviewActionItem = asyncHandler(
     const priority = optionalNullable(body.priority, "priority");
 
     const id = requireParam(req.params.id, "meeting id");
-    const result = await w1SumService.reviewActionItem(
+    const result = await summaryPipelineService.reviewActionItem(
       id,
       requireParam(req.params.itemId, "action item id"),
       body.action,

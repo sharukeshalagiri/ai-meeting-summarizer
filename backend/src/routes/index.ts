@@ -21,10 +21,10 @@ import meetingExtrasRoutes from "./meetingExtras.routes";
 import meetingRoutes from "./meeting.routes";
 import transcriptRoutes from "./transcript.routes";
 import userRoutes from "./user.routes";
-import w1SumRoutes from "./summaryPipeline.routes";
-import w2SpkRoutes from "./speakers.routes";
-import w3JobsRoutes from "./processing.routes";
-import w3JobsHealthRoutes from "./health.routes";
+import summaryPipelineRoutes from "./summaryPipeline.routes";
+import speakersRoutes from "./speakers.routes";
+import processingRoutes from "./processing.routes";
+import healthRoutes from "./health.routes";
 import { demoSearch } from "../controllers/demo.controller";
 import { demoReadOnly } from "../middleware/demo.middleware";
 import { durationCaps, rateLimit } from "../middleware/rateLimit.middleware";
@@ -53,7 +53,7 @@ router.use(demoReadOnly);
 
 router.use("/auth", authRoutes);
 // Health with the queue state, and readiness (503 while it is down).
-router.use("/health", w3JobsHealthRoutes);
+router.use("/health", healthRoutes);
 // Demo status and the "Try the demo" sign-in (public).
 router.use("/demo", demoRouter);
 
@@ -84,13 +84,13 @@ router.post("/chat", askQuestion);
 router.get("/chat/:id", getConversation);
 
 // Mode, re-summarize and action item review under /meetings.
-router.use("/meetings", w1SumRoutes);
+router.use("/meetings", summaryPipelineRoutes);
 
 // Speakers (list, rename, accept a name suggestion) under /meetings.
-router.use("/meetings", w2SpkRoutes);
+router.use("/meetings", speakersRoutes);
 
 // Process, retry and the progress stream under /meetings.
-router.use("/meetings", w3JobsRoutes);
+router.use("/meetings", processingRoutes);
 
 // Settings, devices, series + prep, and per-meeting exports.
 router.use("/account", accountRoutes);
