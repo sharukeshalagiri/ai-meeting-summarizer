@@ -5,7 +5,10 @@
 
 ## Summary
 
-<!-- What changed and why, in a few bullets. -->
+<!-- What changed and why, in a few bullets. PRs are squash-merged:
+     the title (`type(scope): what changed`, 72 characters or fewer, no
+     track id) becomes the commit subject on main, and this summary is
+     the commit body. -->
 
 ## Files outside ownership
 

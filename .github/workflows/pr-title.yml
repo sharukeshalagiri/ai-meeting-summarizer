@@ -1,0 +1,26 @@
+name: PR title
+
+# PRs are squash-merged, so the PR title becomes the commit subject on
+# main. Rules: scripts/lib/commit-title.mjs. Its own workflow so that
+# editing a title re-runs only this check.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    name: PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/check-pr-title.mjs
