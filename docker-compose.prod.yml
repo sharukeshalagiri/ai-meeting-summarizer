@@ -22,7 +22,7 @@ x-backend-env: &backend-env
   PORT: "5000"
   DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_meeting_summarizer}
   GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY}
-  # w4-acct: login sessions; recorders use per-user tokens (Devices page).
+  # Login sessions; recorders use per-user tokens (Devices page).
   SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
   AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-false}
   SMTP_HOST: ${SMTP_HOST:-}
@@ -40,7 +40,7 @@ x-backend-env: &backend-env
   DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
   UPLOAD_DIR: uploads/meetings
   LIVE_CHUNK_DIR: uploads/live
-  # w5-demo: public-instance safety. Rate limits and the audio cap are on
+  # Public-instance safety. Rate limits and the audio cap are on
   # by default in production; DEMO_MODE shows "Try the demo".
   DEMO_MODE: ${DEMO_MODE:-false}
   DEMO_SESSION_HOURS: ${DEMO_SESSION_HOURS:-2}
